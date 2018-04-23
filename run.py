@@ -34,8 +34,9 @@ while True:
         selection = random.sample(actions, 1)[0]
         action = (0, (selection[0], math.radians(selection[1])))
 
-    if random.random() < 0.0005:
+    if random.random() < 0.001:
         p.reset_game()
+        print("reset")
 
     observation = np.swapaxes(p.getScreenRGB(),0,1)
 
