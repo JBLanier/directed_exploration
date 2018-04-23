@@ -5,6 +5,7 @@ import math
 import numpy as np
 import cv2
 import time
+import random
 
 
 def cart2pol(x, y):
@@ -19,33 +20,22 @@ p = ContinousPLE(game, fps=30, display_screen=True, add_noop_action=False)
 p.init()
 reward = 0.0
 
-pygame.joystick.init()
-
-joystick = pygame.joystick.Joystick(0)
-joystick.init()
-
 test_image_shown = False
 
+actions = {(0, 0), (0.5, 0), (0.5, 90), (0.5, 180), (0.5, -90)}
+action = (0, (0, 0))
 while True:
     frame_start_time = time.time()
 
     if p.game_over():
         p.reset_game()
 
-    x = joystick.get_axis(0)
-    y = joystick.get_axis(1)
+    if random.random() < 0.05:
+        selection = random.sample(actions, 1)[0]
+        action = (0, (selection[0], math.radians(selection[1])))
 
-    # print("X,Y: ({},{})".format(x,y))
-    r, phi = cart2pol(x, y)
-
-    if abs(r) < 0.12:
-        r = 0
-    else:
-        r = min(1, r)
-        r = r + 0.12 * math.log(r)
-        r = r * 0.30
-
-    # print("r,phi: ({},{})".format(r,phi))
+    if random.random() < 0.0005:
+        p.reset_game()
 
     observation = np.swapaxes(p.getScreenRGB(),0,1)
 
@@ -53,7 +43,6 @@ while True:
     # 	cv2.imshow("obs", observation[...,::-1])
     # 	cv2.waitKey(1)
 
-    action = (0, (r, phi))
     reward = p.act(action)
 
     time.sleep((15.4444444 - (time.time() - frame_start_time)) * 0.001)
