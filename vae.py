@@ -44,9 +44,8 @@ z = Lambda(sampling, output_shape=(latent_dim,))([z_mean, z_log_var])
 # we instantiate these layers separately so as to reuse them later
 decoder_h2 = Dense(intermediate_dim, activation='relu')(z)
 decoder_h1 = Dense(intermediate_dim*2, activation='relu')(decoder_h2)
-decoder_mean = Dense(original_dim, activation='sigmoid')
-h_decoded = decoder_h1(z)
-x_decoded_mean = decoder_mean(h_decoded)
+x_decoded_mean = Dense(original_dim, activation='sigmoid')(decoder_h1)
+
 
 # instantiate VAE model
 vae = Model(x, x_decoded_mean)
