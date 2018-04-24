@@ -116,7 +116,7 @@ x_test = x_test.astype('float32') / 255.
 
 vae.fit(x_train, x_train,
         shuffle=True,
-        epochs=1,
+        epochs=50,
         batch_size=batch_size)
 
 for i in range(30):
