@@ -19,15 +19,14 @@ from keras.models import Model
 from keras import backend as K
 from keras import metrics
 from keras.datasets import cifar10
+from keras import objectives
 
-batch_size = 100
+batch_size = 32
 original_dim = 784
-latent_dim = 2
+latent_dim = 32
 intermediate_dim = 256
 epochs = 50
 epsilon_std = 1.0
-
-relu_initializer = 'he_normal'
 
 def sampling(args):
     z_mean, z_log_var = args
@@ -38,13 +37,13 @@ def sampling(args):
 
 x = Input(shape=(64, 64, 3))
 encode = Conv2D(filters=32, kernel_size=4, strides=2,
-                padding='valid', activation='relu', kernel_initializer=relu_initializer, name='encode_1')(x)
+                padding='valid', activation='relu', name='encode_1')(x)
 encode = Conv2D(filters=64, kernel_size=4, strides=2,
-                padding='valid', activation='relu', kernel_initializer=relu_initializer, name='encode_2')(encode)
+                padding='valid', activation='relu', name='encode_2')(encode)
 encode = Conv2D(filters=128, kernel_size=4, strides=2,
-                padding='valid', activation='relu', kernel_initializer=relu_initializer, name='encode_3')(encode)
+                padding='valid', activation='relu', name='encode_3')(encode)
 encode = Conv2D(filters=256, kernel_size=4, strides=2,
-                padding='valid', activation='relu', kernel_initializer=relu_initializer, name='encode_4')(encode)
+                padding='valid', activation='relu', name='encode_4')(encode)
 
 vae_z_in = Flatten()(encode)
 z_mean = Dense(latent_dim)(vae_z_in)
@@ -54,16 +53,16 @@ z_log_var = Dense(latent_dim)(vae_z_in)
 z = Lambda(sampling, output_shape=(latent_dim,))([z_mean, z_log_var])
 
 # we instantiate these layers separately so as to reuse them later
-decode_dense = Dense(units=1024, activation='relu', kernel_initializer=relu_initializer, name='decode_dense')(z)
+decode_dense = Dense(units=1024, activation='relu', name='decode_dense')(z)
 
 reshape = Reshape(target_shape=(1, 1, 1024))(decode_dense)
 
 decode = Conv2DTranspose(filters=128, kernel_size=5, strides=2,
-                         padding='valid', activation='relu', kernel_initializer=relu_initializer, name='decode_1')(reshape)
+                         padding='valid', activation='relu', name='decode_1')(reshape)
 decode = Conv2DTranspose(filters=64, kernel_size=5, strides=2,
-                         padding='valid', activation='relu', kernel_initializer=relu_initializer, name='decode_2')(decode)
+                         padding='valid', activation='relu', name='decode_2')(decode)
 decode = Conv2DTranspose(filters=32, kernel_size=6, strides=2,
-                         padding='valid', activation='relu', kernel_initializer=relu_initializer, name='decode_3')(decode)
+                         padding='valid', activation='relu', name='decode_3')(decode)
 decode = Conv2DTranspose(filters=3, kernel_size=6, strides=2,
                          padding='valid', activation='sigmoid', name='decode_4')(decode)
 
@@ -72,17 +71,21 @@ decode = Conv2DTranspose(filters=3, kernel_size=6, strides=2,
 vae = Model(x, decode)
 
 
-def vae_r_loss(y_true, y_pred):
-    return 1000 * K.mean(K.square(y_true - y_pred), axis=[1, 2, 3])
+# def vae_r_loss(y_true, y_pred):
+#     return K.mean(K.square(y_true - y_pred), axis=[1, 2, 3])
+#
+#
+# def vae_kl_loss(y_true, y_pred):
+#     return - 0.5 * K.mean(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1)
+#
+#
+# def vae_loss(y_true, y_pred):
+#     return vae_r_loss(y_true, y_pred) + vae_kl_loss(y_true, y_pred)
 
-
-def vae_kl_loss(y_true, y_pred):
-    return - 0.5 * K.mean(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1)
-
-
-def vae_loss(y_true, y_pred):
-    return vae_r_loss(y_true, y_pred) + vae_kl_loss(y_true, y_pred)
-
+def vae_loss(x, x_decoded_mean):
+    r_loss = 1000 * K.mean(K.square(x - x_decoded_mean), axis = [1,2,3])
+    kl_loss = - 0.5 * K.mean(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1)
+    return r_loss + kl_loss
 
 vae.compile(optimizer='rmsprop', loss=vae_loss)
 vae.summary()
@@ -109,14 +112,20 @@ x_test = r_x_test
 x_train = x_train.astype('float32') / 255.
 x_test = x_test.astype('float32') / 255.
 #
-# cv2.imshow('img', cv2.cvtColor(x_train[0], cv2.COLOR_RGB2BGR))
-# cv2.waitKey()
 
 
 vae.fit(x_train, x_train,
         shuffle=True,
-        epochs=epochs,
+        epochs=1,
         batch_size=batch_size)
+
+for i in range(30):
+    cv2.imshow('orig', cv2.cvtColor(x_test[i], cv2.COLOR_RGB2BGR))
+    cv2.imshow('reconstructed', cv2.cvtColor(np.squeeze(vae.predict(np.expand_dims(x_test[i],0))), cv2.COLOR_RGB2BGR))
+    cv2.waitKey(0)
+
+cv2.destroyAllWindows()
+
 
 # build a model to project inputs on the latent space
 # encoder = Model(x, z_mean)
