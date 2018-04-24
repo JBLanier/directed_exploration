@@ -14,7 +14,7 @@ def cart2pol(x, y):
     return (rho, phi)
 
 
-game = BoxPush(display_width=500, display_height=500)
+game = BoxPush(display_width=64, display_height=64)
 p = ContinousPLE(game, fps=30, display_screen=True, add_noop_action=False)
 
 p.init()
