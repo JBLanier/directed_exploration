@@ -30,9 +30,7 @@ def save_vae(vae):
 def train_vae(vae):
     rollout_gen = RolloutGenerator()
 
-    vae.vae.fit_generator(generator=rollout_gen,
-                          use_multiprocessing=True,
-                          workers=2)
+    vae.vae.fit_generator(generator=rollout_gen)
 
 def debug_play(vae):
     game = BoxPush(display_width=64, display_height=64)

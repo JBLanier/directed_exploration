@@ -65,7 +65,7 @@ class RolloutGenerator(keras.utils.Sequence):
         sample_count = 0
         self.observation_queue = multiprocessing.Queue(maxsize=max_buffer_size)
         self.msg_queue = multiprocessing.Queue()
-        self.process_num = 4
+        self.process_num = 8
         self.processes = []
         for i in range(self.process_num):
             p = multiprocessing.Process(target=random_rollouts, args=(self.observation_queue, self.msg_queue))
