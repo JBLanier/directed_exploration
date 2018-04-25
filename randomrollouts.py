@@ -7,6 +7,9 @@ import math
 import multiprocessing
 from queue import Empty
 
+import os
+
+os.environ['SDL_VIDEODRIVER'] = 'dummy'
 
 def random_rollouts(obs_queue, msg_queue):
 
