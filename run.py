@@ -13,6 +13,8 @@ import sys
 import datetime
 from matplotlib import pyplot as plt
 import argparse
+from tkinter import *
+from randomrollouts import RolloutGenerator
 
 
 def cart2pol(x, y):
@@ -20,97 +22,76 @@ def cart2pol(x, y):
     phi = np.arctan2(y, x)
     return (rho, phi)
 
-def random_rollouts(obs_queue, msg_queue):
-
-    game = BoxPush(display_width=64, display_height=64)
-    p = ContinousPLE(game, fps=30, display_screen=False, add_noop_action=False)
-    p.init()
-    actions = {(0, 0), (0.5, 0), (0.5, 90), (0.5, 180), (0.5, -90)}
-    action = (0, (0, 0))
-    p.act(action)
-
-    while True:
-
-        if p.game_over():
-            p.reset_game()
-
-        if random.random() < 0.05:
-            selection = random.sample(actions, 1)[0]
-            action = (0, (selection[0], math.radians(selection[1])))
-
-        if random.random() < 0.001:
-            p.reset_game()
-
-        observation = np.swapaxes(p.getScreenRGB(),0,1) / 255.0
-
-        obs_queue.put(observation, block=True)
-
-        #     # cv2.imshow("obs", observation[::,::-1])
-        #     # cv2.waitKey(1)
-
-        reward = p.act(action)
-
-        try:
-            msg = msg_queue.get(block=False)  # Read from the queue and do nothing
-            print("msg: {}".format(msg))
-            if (msg == 'QUIT'):
-                print("time to quit")
-                break
-        except Empty:
-            pass
-
 def save_vae(vae):
     path = 'weights/vae_weights_{date:%Y-%m-%d_%H-%M-%S}.txt'.format(date=datetime.datetime.now())
     print('Saving to {}'.format(path))
     vae.save_model(path)
 
 def train_vae(vae):
-    batch_size = 256
-    training_sample_amount = 10000000
-    training_samples_left = training_sample_amount
-    max_buffer_size = batch_size * 20
-    sample_count = 0
-    observation_queue = multiprocessing.Queue(maxsize=max_buffer_size)
-    msg_queue = multiprocessing.Queue()
-    process_num = 8
-    processes = []
-    for i in range(process_num):
-        p = multiprocessing.Process(target=random_rollouts, args=(observation_queue, msg_queue))
-        p.daemon = True
-        p.start()
-        processes.append(p)
+    rollout_gen = RolloutGenerator()
 
-    while training_samples_left != 0:
-        batch_amt = min(training_samples_left, batch_size)
-        samples = [observation_queue.get() for _ in range(batch_amt)]
-        batch = np.stack(samples, axis=0)
-        vae.train_on_batch(batch)
-        training_samples_left -= batch_amt
-        sample_count += batch_amt
-        if sample_count % (batch_size * 100) == 0:
-            print("{} samples trained on".format(sample_count))
-            orig = batch[random.randint(0, batch_size - 1)]
-            cv2.imshow("orig", orig[:, :, ::-1])
-            cv2.imshow("reconstructed", np.squeeze(vae.vae.predict(np.expand_dims(orig, axis=0)))[:, :, ::-1])
-            cv2.waitKey(1)
+    vae.vae.fit_generator(generator=rollout_gen,
+                          use_multiprocessing=True,
+                          workers=2)
 
-        if sample_count % (batch_size * 3000) == 0:
-            save_vae(vae)
+def debug_play(vae):
+    game = BoxPush(display_width=64, display_height=64)
+    p = ContinousPLE(game, fps=30, display_screen=True, add_noop_action=False)
 
-    save_vae(vae)
+    p.init()
 
-    print("quiting")
+    pygame.joystick.init()
 
-    for i in range(process_num):
-        msg_queue.put('QUIT')
-    for i in range(process_num):
-        processes[i].join()
+    joystick = pygame.joystick.Joystick(0)
+    joystick.init()
 
-    observation_queue.close()
-    msg_queue.close()
-    #     processes[i].
-    print("DONE")
+    while True:
+        frame_start_time = time.time()
 
+        if p.game_over():
+            p.reset_game()
+
+        x = joystick.get_axis(0)
+        y = joystick.get_axis(1)
+
+        # print("X,Y: ({},{})".format(x,y))
+        r, phi = cart2pol(x, y)
+
+        if abs(r) < 0.12:
+            r = 0
+        else:
+            r = min(1, r)
+            r = r + 0.12 * math.log(r)
+            r = r * 0.30
+
+        observation = np.swapaxes(p.getScreenRGB(), 0, 1) / 255.0
+
+        cv2.imshow("obs", np.squeeze(vae.vae.predict(np.expand_dims(observation, axis=0)))[:, :, ::-1])
+        cv2.waitKey(1)
+
+        action = (0, (r, phi))
+        reward = p.act(action)
+
+        time.sleep((15.4444444 - (time.time() - frame_start_time)) * 0.001)
+
+def debug_latent_space(vae):
+
+    def show_values(a):
+        print(w1.get(), w2.get())
+        print(a)
+
+    master = Tk()
+    w1 = Scale(master, from_=0, to=42)
+    w1.set(19)
+    w1.pack()
+    w2 = Scale(master, from_=0, to=200, orient=HORIZONTAL, command=show_values )
+    w2.set(23)
+    w2.pack()
+    Button(master, text='Show', command=show_values).pack()
+
+    master.mainloop()
+
+    print("yooo")
 
 def main(args):
     vae = VAE()
@@ -118,13 +99,18 @@ def main(args):
         vae.load_model(args.load_vae_weights)
     if args.train_vae:
         train_vae(vae)
+    if args.debug_play:
+        debug_play(vae)
 
+    debug_latent_space(vae)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--load-vae-weights", help="path to start VAE weights with",
                         type=str)
     parser.add_argument("--train-vae", help="if true, train VAE",
+                        action="store_true")
+    parser.add_argument("--debug-play", help="use controller to debug environment",
                         action="store_true")
     args = parser.parse_args()
     main(args)
