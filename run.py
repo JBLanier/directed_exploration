@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 import argparse
 from tkinter import *
 from randomrollouts import RolloutGenerator
-
+from keras.callbacks import ModelCheckpoint, TensorBoard
 
 def cart2pol(x, y):
     rho = np.sqrt(x ** 2 + y ** 2)
@@ -30,7 +30,19 @@ def save_vae(vae):
 def train_vae(vae):
     rollout_gen = RolloutGenerator()
 
-    vae.vae.fit_generator(generator=rollout_gen)
+    checkpoint_callback = ModelCheckpoint(filepath="weights/weights.{epoch:02d}-{loss:.2f}.hdf5",
+                                          monitor='loss',
+                                          save_weights_only=True,
+                                          period=1)
+
+    tensorboard_callback = TensorBoard(log_dir='./graph',
+                                       histogram_freq=1,
+                                       write_graph=True,
+                                       write_images=True)
+
+
+    vae.vae.fit_generator(generator=rollout_gen,
+                          callbacks=[checkpoint_callback, tensorboard_callback])
 
 def debug_play(vae):
     game = BoxPush(display_width=64, display_height=64)

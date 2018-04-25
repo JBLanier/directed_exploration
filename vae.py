@@ -51,8 +51,8 @@ class VAE():
         # encode_dense_2 = Dense(units=512, activation='relu', name='encode_dense_2')(encode_dense_1)
 
 
-        z_mean = Dense(latent_dim)(vae_flatten)
-        z_log_var = Dense(latent_dim)(vae_flatten)
+        z_mean = Dense(latent_dim, name='z_mean')(vae_flatten)
+        z_log_var = Dense(latent_dim, name='z_log_var')(vae_flatten)
 
         # note that "output_shape" isn't necessary with the TensorFlow backend
         z = Lambda(sampling, output_shape=(latent_dim,))([z_mean, z_log_var])
