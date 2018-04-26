@@ -100,17 +100,24 @@ class VAE():
         decode_4_dec = decode_4(decode_3_dec)
         self.vae_decoder = Model(vae_z_input, decode_4_dec)
 
-        def vae_loss(x, x_decoded_mean):
-            r_loss = 1000 * K.mean(K.square(x - x_decoded_mean), axis = [1,2,3])
-            kl_loss = - 0.5 * K.mean(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1)
-            return r_loss + kl_loss
+        def reconstruction_loss(x, x_decoded_mean):
+            return 1000 * K.mean(K.square(x - x_decoded_mean), axis = [1,2,3])
 
-        self.vae.compile(optimizer='rmsprop', loss=vae_loss)
+        def kl_loss(x, x_decoded_mean):
+            return - 0.5 * K.mean(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1)
+
+        def vae_loss(x, x_decoded_mean):
+            return reconstruction_loss(x, x_decoded_mean) + kl_loss(x, x_decoded_mean)
+
+        self.vae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, reconstruction_loss])
+        print(self.vae.metrics_names)
         self.vae.summary()
 
 
     def train_on_batch(self, batch):
-        self.vae.train_on_batch(x=batch, y=batch)
+        values = self.vae.train_on_batch(x=batch, y=batch)
+        return dict(zip(self.vae.metrics_names, values))
+
 
     def encode(self, x):
         return self.vae_encoder.predict([x])

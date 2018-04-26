@@ -13,7 +13,7 @@ import sys
 import datetime
 from matplotlib import pyplot as plt
 import argparse
-
+from tensorboardlogger import TensorboardLogger
 
 def cart2pol(x, y):
     rho = np.sqrt(x ** 2 + y ** 2)
@@ -80,11 +80,13 @@ def train_vae(vae):
         p.start()
         processes.append(p)
 
+    tb = TensorboardLogger(vae.vae)
+
     while training_samples_left != 0:
         batch_amt = min(training_samples_left, batch_size)
         samples = [observation_queue.get() for _ in range(batch_amt)]
         batch = np.stack(samples, axis=0)
-        vae.train_on_batch(batch)
+        tb.log_batch(batch_amt, vae.train_on_batch(batch))
         training_samples_left -= batch_amt
         sample_count += batch_amt
         if sample_count % (batch_size * 100) == 0:
@@ -114,8 +116,12 @@ def train_vae(vae):
 
 def main(args):
     vae = VAE()
+
     if args.load_vae_weights:
         vae.load_model(args.load_vae_weights)
+
+    tb = TensorboardLogger(vae.vae)
+
     if args.train_vae:
         train_vae(vae)
 
