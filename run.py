@@ -14,6 +14,9 @@ import datetime
 from matplotlib import pyplot as plt
 import argparse
 from tensorboardlogger import TensorboardLogger
+import os
+
+os.environ['SDL_VIDEODRIVER'] = 'dummy'
 
 def cart2pol(x, y):
     rho = np.sqrt(x ** 2 + y ** 2)
