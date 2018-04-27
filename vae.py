@@ -21,8 +21,8 @@ from keras import metrics
 from keras.datasets import cifar10
 from keras import objectives
 
-batch_size = 32
-latent_dim = 32
+batch_size = 128
+latent_dim = 64
 epsilon_std = 1.0
 
 def sampling(args):
@@ -109,7 +109,7 @@ class VAE():
         def vae_loss(x, x_decoded_mean):
             return reconstruction_loss(x, x_decoded_mean) + kl_loss(x, x_decoded_mean)
 
-        self.vae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[vae_loss, kl_loss, reconstruction_loss])
+        self.vae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, reconstruction_loss])
         self.vae.summary()
 
 

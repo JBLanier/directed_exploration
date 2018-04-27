@@ -5,11 +5,14 @@ from continousple import ContinousPLE
 import random
 import math
 import multiprocessing
-from queue import Empty
+from queue import Empty, Full
+import atexit
+import time
 
 import os
 
 os.environ['SDL_VIDEODRIVER'] = 'dummy'
+
 
 def random_rollouts(obs_queue, msg_queue):
 
@@ -34,24 +37,36 @@ def random_rollouts(obs_queue, msg_queue):
 
         observation = np.swapaxes(p.getScreenRGB(),0,1) / 255.0
 
-        obs_queue.put(observation, block=True)
-
-        #     # cv2.imshow("obs", observation[::,::-1])
-        #     # cv2.waitKey(1)
-
-        reward = p.act(action)
-
         try:
-            msg = msg_queue.get(block=False)  # Read from the queue and do nothing
-            print("msg: {}".format(msg))
-            if (msg == 'QUIT'):
-                print("time to quit")
-                break
-        except Empty:
+            obs_queue.put(observation, block=True, timeout=1)
+        except Full:
             pass
+
+        p.act(action)
+
+        msg = None
+        try:
+            msg = msg_queue.get(block=False) # Read from the queue and do nothing
+        except Empty:
+            msg = None
+        finally:
+            if msg:
+                # print("msg: {}".format(msg))
+                p.quit()
+                break
+
 
 
 class RolloutGenerator(keras.utils.Sequence):
+
+    # def cleanup(self):
+    #     timeout_sec = 5
+    #     print("generator cleaning up")
+    #     for p in self.processes:
+    #         p.terminate()
+    #         print("generator killed process")
+
+
     'Generates data for Keras'
     def __init__(self, batch_size=256, dim=(64, 64)):
         'Initialization'
@@ -73,6 +88,16 @@ class RolloutGenerator(keras.utils.Sequence):
             p.start()
             self.processes.append(p)
 
+        # atexit.register(self.cleanup())
+
+    def quit(self):
+        for i in range(self.process_num):
+            self.msg_queue.put('QUIT')
+        for i in range(self.process_num):
+            self.processes[i].join(timeout=1)
+
+        self.observation_queue.close()
+        self.msg_queue.close()
 
     def __len__(self):
         'Denotes the number of batches per epoch'

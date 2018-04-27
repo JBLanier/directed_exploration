@@ -44,6 +44,9 @@ def train_vae(vae):
     vae.vae.fit_generator(generator=rollout_gen,
                           callbacks=[checkpoint_callback, tensorboard_callback])
 
+    print("quitting rollout pygame environments...")
+    rollout_gen.quit()
+
 def debug_play(vae):
     game = BoxPush(display_width=64, display_height=64)
     p = ContinousPLE(game, fps=30, display_screen=True, add_noop_action=False)
@@ -112,7 +115,7 @@ def main(args):
     if args.debug_play:
         debug_play(vae)
 
-    debug_latent_space(vae)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
