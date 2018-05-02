@@ -17,6 +17,8 @@ from tkinter import *
 from randomrollouts import RolloutGenerator
 from keras.callbacks import ModelCheckpoint, TensorBoard
 
+last_scale_adjust_time = time.time()
+
 def cart2pol(x, y):
     rho = np.sqrt(x ** 2 + y ** 2)
     phi = np.arctan2(y, x)
@@ -30,18 +32,19 @@ def save_vae(vae):
 def train_vae(vae):
     rollout_gen = RolloutGenerator()
 
-    checkpoint_callback = ModelCheckpoint(filepath="weights/weights.{epoch:02d}-{loss:.2f}.hdf5",
+    checkpoint_callback = ModelCheckpoint(filepath="weights8/weights.{epoch:02d}-{loss:.2f}.hdf5",
                                           monitor='loss',
                                           save_weights_only=True,
                                           period=1)
 
     tensorboard_callback = TensorBoard(log_dir='./graph',
-                                       histogram_freq=1,
+                                       histogram_freq=0,
                                        write_graph=True,
                                        write_images=True)
 
 
     vae.vae.fit_generator(generator=rollout_gen,
+                          epochs=40,
                           callbacks=[checkpoint_callback, tensorboard_callback])
 
     print("quitting rollout pygame environments...")
@@ -89,22 +92,43 @@ def debug_play(vae):
 
 def debug_latent_space(vae):
 
+
     def show_values(a):
-        print(w1.get(), w2.get())
-        print(a)
+        global last_scale_adjust_time
+        if time.time() - last_scale_adjust_time > 0.1:
+            new_z = []
+            for w in scales:
+                new_z.append(w.get())
+            cv2.imshow("decoded", np.squeeze(vae.decode(np.expand_dims(new_z,axis=0))))
+            cv2.waitKey(1)
+            last_scale_adjust_time = time.time()
+
+    game = BoxPush(display_width=64, display_height=64)
+    p = ContinousPLE(game, fps=30, display_screen=False, add_noop_action=False)
+    p.init()
+    p.act((0,(0,0)))
+    p.act((0,(0,0)))
+    observation = np.swapaxes(p.getScreenRGB(), 0, 1) / 255.0
+    p.quit()
+    z = np.squeeze(vae.encode(np.expand_dims(observation,axis=0)))
+    cv2.imshow("decoded", np.squeeze(vae.decode(np.expand_dims(z,axis=0))))
+
+    print("z shape: {}", format(z.shape))
 
     master = Tk()
-    w1 = Scale(master, from_=0, to=42)
-    w1.set(19)
-    w1.pack()
-    w2 = Scale(master, from_=0, to=200, orient=HORIZONTAL, command=show_values )
-    w2.set(23)
-    w2.pack()
-    Button(master, text='Show', command=show_values).pack()
+    scales = []
+
+    for i in range(len(z)):
+        w = Scale(master, from_=-3.0, to=3.0, orient=HORIZONTAL, command=show_values, resolution=0.01, width=5,
+                  length=200, showvalue=False)
+        w.set(z[i])
+        w.pack()
+        scales.append(w)
+
 
     master.mainloop()
 
-    print("yooo")
+    print("done debugging latent space")
 
 def main(args):
     vae = VAE()
@@ -114,8 +138,8 @@ def main(args):
         train_vae(vae)
     if args.debug_play:
         debug_play(vae)
-
-
+    if args.debug_latent_space:
+        debug_latent_space(vae)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -125,6 +149,8 @@ if __name__ == '__main__':
                         action="store_true")
     parser.add_argument("--debug-play", help="use controller to debug environment",
                         action="store_true")
+    parser.add_argument("--debug-latent-space", help="play with latent space variables",
+                        action="store_true", default=True)
     args = parser.parse_args()
     main(args)
 
