@@ -1,6 +1,6 @@
 
 
-from vae import VAE
+from vae_keras import VAE
 from staternn import StateRNN
 import argparse
 import random

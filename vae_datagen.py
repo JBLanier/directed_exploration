@@ -54,7 +54,7 @@ def write_random_episode_to_tf_record(episode_index, write_dir, max_episode_leng
         frame, reward, done, _ = env.step(np.array(action))
         # env.render()
 
-        if random.random() < 0.1:
+        if random.random() < 0.05:
             action = random.sample(ACTIONS, 1)[0]
 
         step_index += 1
@@ -97,7 +97,7 @@ if __name__ == '__main__':
     parser.add_argument("--num-episodes", help="Number of episode rollouts to generate",
                         type=int, required=True)
     parser.add_argument("--write-dir", help="Directory to save tfrecords files to",
-                        type=str, default='tf_records')
+                        type=str, default='vae_tf_records')
     parser.add_argument("--num-processes", help="Number of concurrent process to generate rollouts",
                         type=int, default=10)
     parser.add_argument("--max-episode-length", help="Maximum length of any single episode",
