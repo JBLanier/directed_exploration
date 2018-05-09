@@ -5,6 +5,8 @@ from scipy.stats import norm
 import tensorflow as tf
 import os
 import datetime
+import cv2
+from vae import VAE
 from tensorflow.python import debug as tf_debug
 
 
@@ -20,16 +22,17 @@ def variable_summaries(var):
     tf.summary.scalar('min', tf.reduce_min(var))
     tf.summary.histogram('histogram', var)
 
-class VAE:
+class StateRNN:
 
-    def __init__(self, latent_dim=128, restore_from_dir=None):
-        print("VAE latent dim {}".format(latent_dim))
+    def __init__(self, latent_dim=128, action_dim=2, restore_from_dir=None):
+        print("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
         self.graph = tf.Graph()
         self.sess = tf.Session(graph=self.graph)
         self.latent_dim = latent_dim
-        self.save_prefix = 'vae'
+        self.action_dim = action_dim
+        self.save_prefix = 'state_rnn'
         self.date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        self.save_file_path = './vae_model_{}'.format(self.date_identifier)
+        self.save_file_path = './state_rnn_model_{}'.format(self.date_identifier)
         self.tensorboard_path = './tensorboard'
 
         self._build_model(restore_from_dir)
@@ -37,7 +40,7 @@ class VAE:
         self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.date_identifier), self.graph)
 
     def _restore_model(self, from_dir):
-        print("\n\nRestoring Model from {}".format(from_dir))
+        print("\n\nRestoring State RNN Model from {}".format(from_dir))
         # self.save_file_path = from_dir
         with self.graph.as_default():
             # self.saver = tf.train.import_meta_graph(os.path.join(self.save_file_path, self.save_prefix + '.meta'))
@@ -46,113 +49,100 @@ class VAE:
     def _build_model(self, restore_from_dir=None):
 
         with self.graph.as_default():
-            vae_scope = 'VAE'
+            vae_scope = 'State_RNN'
             with tf.variable_scope(vae_scope):
                 variance_scaling = tf.contrib.layers.variance_scaling_initializer()
                 xavier = tf.contrib.layers.xavier_initializer()
 
-                # Building the encoder
+                # Building the rnn
 
-                self.x = tf.placeholder(tf.float32, shape=[None, 64, 64, 3], name='x')
+                self.sequence_inputs = tf.placeholder(tf.float32, shape=[None, None, self.latent_dim + self.action_dim], name='z_and_action_inputs')
+                # self.sequence_inputs = tf.Print(self.sequence_inputs,[self.sequence_inputs, tf.shape(self.sequence_inputs)], "Sequence inputs: ")
 
-                encode_1 = tf.layers.Conv2D(filters=32, kernel_size=4, strides=2,
-                                            padding='valid', activation=tf.nn.relu,
-                                            kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
-                                            name='encode_1')(self.x)
-                encode_2 = tf.layers.Conv2D(filters=64, kernel_size=4, strides=2,
-                                            padding='valid', activation=tf.nn.relu,
-                                            kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
-                                            name='encode_2')(encode_1)
-                encode_3 = tf.layers.Conv2D(filters=128, kernel_size=4, strides=2,
-                                            padding='valid', activation=tf.nn.relu,
-                                            kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
-                                            name='encode_3')(encode_2)
-                encode_4 = tf.layers.Conv2D(filters=256, kernel_size=4, strides=2,
-                                            padding='valid', activation=tf.nn.relu,
-                                            kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
-                                            name='encode_4')(encode_3)
-                vae_flatten = tf.layers.Flatten()(encode_4)
+                self.sequence_targets = tf.placeholder(tf.float32, shape=[None, None, self.latent_dim], name='z_targets')
+                # self.sequence_targets = tf.Print(self.sequence_targets,[self.sequence_targets, tf.shape(self.sequence_targets)], "Sequence targets: ")
 
-                z_mean = tf.layers.Dense(units=self.latent_dim, name='z_mean')(vae_flatten)
-                z_log_var = tf.layers.Dense(units=self.latent_dim, name='z_log_var')(vae_flatten)
+                input_shape = tf.shape(self.sequence_inputs)
 
-                # Sampler: Normal (gaussian) random distribution
-                with tf.name_scope("sampling"):
-                    eps = tf.random_normal(tf.shape(z_log_var), dtype=tf.float32, mean=0., stddev=1.0, name='epsilon')
-                    self.z_encoded = z_mean + tf.exp(z_log_var / 2) * eps
 
-                # we instantiate these layers separately so as to reuse them later
-                decode_dense_1 = tf.layers.Dense(units=1024, activation=tf.nn.relu, name='decode_dense_1')
+                def length(sequence):
+                    with tf.name_scope('computed_length'):
+                        used = tf.sign(tf.reduce_max(tf.abs(sequence), 2))
+                        length = tf.reduce_sum(used, 1)
+                        length = tf.cast(length, tf.int32)
+                        return length
 
-                def decode_reshape(tensor):
-                    return tf.reshape(tensor=tensor, shape=[-1, 1, 1, 1024])
+                self.computed_lengths = length(self.sequence_inputs)
+                self.sequence_lengths = tf.placeholder(tf.int32, shape=[None])
 
-                decode_1 = tf.layers.Conv2DTranspose(filters=128, kernel_size=5, strides=2,
-                                                     padding='valid', activation=tf.nn.relu,
-                                                     kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
-                                                     name='decode_1')
+                # self.computed_lengths = tf.Print(self.computed_lengths,[self.computed_lengths, tf.shape(self.computed_lengths)], "Computed Lengths: ")
+                # self.sequence_lengths = tf.Print(self.sequence_lengths,[self.sequence_lengths, tf.shape(self.sequence_lengths)], "Passed Sequence Lengths: ")
 
-                decode_2 = tf.layers.Conv2DTranspose(filters=64, kernel_size=5, strides=2,
-                                                     padding='valid', activation=tf.nn.relu,
-                                                     kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
-                                                     name='decode_2')
+                with tf.control_dependencies([tf.assert_equal(self.computed_lengths, self.sequence_lengths),
+                                              tf.assert_equal(self.computed_lengths, length(self.sequence_targets))]):
 
-                decode_3 = tf.layers.Conv2DTranspose(filters=32, kernel_size=6, strides=2,
-                                                     padding='valid', activation=tf.nn.relu,
-                                                     kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
-                                                     name='decode_3')
+                    lstm_cell = tf.nn.rnn_cell.LSTMCell(256)
+                    lstm_output, self.lstm_state = tf.nn.dynamic_rnn(cell=lstm_cell,
+                                                                     inputs=self.sequence_inputs,
+                                                                     sequence_length=self.sequence_lengths,
+                                                                     dtype=tf.float32)
 
-                decode_4 = tf.layers.Conv2DTranspose(filters=3, kernel_size=6, strides=2,
-                                                     padding='valid', activation=tf.nn.sigmoid,
-                                                     kernel_initializer=xavier, bias_initializer=xavier,
-                                                     name='decode_4')
+                # lstm_output = tf.Print(lstm_output,[lstm_output[0,2,4], tf.shape(lstm_output)], "lstm_output: ")
+                # reshape lstm output from (batch_size, max_seq_length, ...) to (batch_size * max_seq_length, ...)
+                lstm_output_for_dense = tf.reshape(lstm_output, shape=[input_shape[0] * input_shape[1], lstm_output.shape[-1]])
+                # lstm_output_for_dense = tf.Print(lstm_output_for_dense,[lstm_output_for_dense,tf.shape(lstm_output_for_dense)], "lstm_output reshaped for dense: ")
+                reshaped_again = tf.reshape(lstm_output_for_dense, shape=[input_shape[0], input_shape[1], lstm_output_for_dense.shape[-1]], name='reshape_again')
+                # lstm_output_for_dense = tf.Print(lstm_output_for_dense, [reshaped_again[0,2,4], tf.shape(reshaped_again)], "lstm output put back")
 
-                with tf.name_scope('decode_encoded'):
-                    decode_dense_encoded_1 = decode_dense_1(self.z_encoded)
-                    decode_encoded_1 = decode_1(decode_reshape(decode_dense_encoded_1))
-                    decode_encoded_2 = decode_2(decode_encoded_1)
-                    decode_encoded_3 = decode_3(decode_encoded_2)
-                    self.decoded_encoded = decode_4(decode_encoded_3)
+                dense1 = tf.layers.dense(inputs=lstm_output_for_dense,
+                                        units=1024,
+                                        activation=tf.nn.relu,
+                                        kernel_initializer=variance_scaling)
 
-                with tf.name_scope('decode_given'):
-                    self.z_given = tf.placeholder(tf.float32, shape=[None, self.latent_dim], name='z_given')
-                    decode_dense_given_1 = decode_dense_1(self.z_given)
-                    decode_given_1 = decode_1(decode_reshape(decode_dense_given_1))
-                    decode_given_2 = decode_2(decode_given_1)
-                    decode_given_3 = decode_3(decode_given_2)
-                    self.decoded_given = decode_4(decode_given_3)
+                dense2 = tf.layers.dense(inputs=dense1,
+                                         units=self.latent_dim,
+                                         activation=None,
+                                         kernel_initializer=variance_scaling,
+                                         bias_initializer=variance_scaling)
+                # dense2 = tf.Print(dense2,[dense2,tf.shape(dense2)], "dense 2 output: ")
 
-                with tf.name_scope('loss'):
-                    with tf.name_scope('kl_div_loss'):
-                        self.kl_div_loss = tf.reduce_mean(
-                            100 * -0.5 * tf.reduce_mean(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=-1)
-                        )
-                        tf.summary.scalar('kl_div_loss', self.kl_div_loss)
+                # reshape dense output back to (batch_size, max_seq_length, ...)
+                self.output = tf.reshape(dense2, shape=[-1, tf.shape(self.sequence_inputs)[1], dense2.shape[-1]])
 
-                    with tf.name_scope('reconstruction_loss'):
-                        self.reconstruction_loss = tf.reduce_mean(
-                            1000 * tf.reduce_mean(tf.square(self.x - self.decoded_encoded), axis=[1, 2, 3])
-                        )
-                        tf.summary.scalar('reconstruction_loss', self.reconstruction_loss)
+                # self.output = tf.Print(self.output, [self.output, tf.shape(self.output)], "dense 2 output reshaped: ")
+                # self.output = tf.Print(self.output, [self.computed_lengths, tf.shape(self.computed_lengths), self.sequence_lengths, tf.shape(self.sequence_lengths)], 'computed and given sequence lengths')
 
-                    self.loss = self.kl_div_loss + self.reconstruction_loss
-                    tf.summary.scalar('total_loss', self.loss)
+                with tf.name_scope('mse_loss'):
+                    # Compute Squared Error for each frame
+                    frame_squared_errors = tf.square(self.output - self.sequence_targets)
+                    frame_mean_squared_errors = tf.reduce_mean(frame_squared_errors, axis=2)
+                    mask = tf.sign(tf.reduce_max(tf.abs(self.sequence_targets), 2))
+                    masked_frame_mse_errors = frame_mean_squared_errors * mask
+
+                    # Average Over actual Sequence Lengths
+                    with tf.control_dependencies([tf.assert_equal(tf.cast(tf.reduce_sum(mask, 1), dtype=tf.int32), self.sequence_lengths)]):
+                        mse_over_sequences = tf.reduce_sum(masked_frame_mse_errors, 1) / tf.cast(self.sequence_lengths, dtype=tf.float32)
+
+                    mse_over_batch = tf.reduce_mean(mse_over_sequences)
+                    self.mse_loss = mse_over_batch
+                    tf.summary.scalar('mse_loss', self.mse_loss)
 
             self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)
-            self.train_op = self.optimizer.minimize(self.loss)
+            self.train_op = self.optimizer.minimize(self.mse_loss)
             # self.check_op = tf.add_check_numerics_ops()
             # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
-            # Initialize the variables (i.e. assign their default value)
             self.tf_summaries_merged = tf.summary.merge_all()
-            self.saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope))
+            self.saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope),
+                                        max_to_keep=None)
             self.init = tf.global_variables_initializer()
-
+        #
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
             self.sess.run(self.init)
 
     def train_on_input_fn(self, input_fn, steps=None):
+        # vae = VAE(restore_from_dir='vae_model_20180507133856')
 
         sess = self.sess
 
@@ -169,79 +159,63 @@ class VAE:
             while True:
 
                 try:
-                    batch_x = sess.run(iter)
+                    batch_inputs, batch_targets, batch_lengths = sess.run(iter)
                 except tf.errors.OutOfRangeError:
                     print("Input_fn ended at step {}".format(step))
                     break
 
                 # Train
-                feed_dict = {self.x: batch_x}
-                _, l, kl, r, summaries = sess.run([self.train_op, self.loss, self.kl_div_loss,
-                                             self.reconstruction_loss, self.tf_summaries_merged],
-                                            feed_dict=feed_dict)
+                feed_dict = {
+                    self.sequence_inputs: batch_inputs,
+                    self.sequence_targets: batch_targets,
+                    self.sequence_lengths: batch_lengths
+                             }
 
-                self.writer.add_summary(summaries, step)
+                _, loss, summaries = sess.run([self.train_op, self.mse_loss, self.tf_summaries_merged], feed_dict=feed_dict)
 
-                if step % 50 == 0 or step == 1:
-                    print('Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
+                # for target in np.squeeze(targets)[0]:
+                #     cv2.imshow("target",np.squeeze(vae.decode_frames(np.expand_dims(target,0)))[:,:,::-1])
+                #     cv2.waitKey(300)
+                # self.writer.add_summary(summaries, step)
+
+                if step % 20 == 0 or step == 1:
+                    print('Step %i, Loss: %f' % (step, loss))
 
                 if steps and step >= steps:
                     print("Completed {} steps".format(steps))
                     break
 
                 step += 1
+    #
+    # def encode_frames(self, float_frames):
+    #     return self.sess.run(self.z_encoded, feed_dict={self.x: float_frames})
+    #
+    # def decode_frames(self, z_codes):
+    #     return self.sess.run(self.decoded_given, feed_dict={self.z_given: z_codes})
+    #
+    # def encode_decode_frames(self, float_frames):
+    #     return self.sess.run(self.decoded_encoded, feed_dict={self.x: float_frames})
+    #
+    # def save_model(self, write_dir=None, write_meta_graph=True):
+    #     if write_dir:
+    #         self.save_file_path = write_dir
+    #     if not os.path.exists(self.save_file_path):
+    #         os.makedirs(self.save_file_path, exist_ok=True)
+    #
+    #     save_path = self.saver.save(self.sess, os.path.join(self.save_file_path, self.save_prefix),
+    #                                 write_meta_graph=write_meta_graph)
+    #     print("VAE Model saved in path: {}".format(save_path))
+    #
+    # def __del__(self):
+    #     if self.writer:
+    #         self.writer.close()
+    #
+    # def __exit__(self, exc_type, exc_val, exc_tb):
+    #     if self.writer:
+    #         self.writer.close()
 
-    def encode_frames(self, float_frames):
-        return self.sess.run(self.z_encoded, feed_dict={self.x: float_frames})
 
-    def decode_frames(self, z_codes):
-        return self.sess.run(self.decoded_given, feed_dict={self.z_given: z_codes})
 
-    def encode_decode_frames(self, float_frames):
-        return self.sess.run(self.decoded_encoded, feed_dict={self.x: float_frames})
-
-    def save_model(self, write_dir=None, write_meta_graph=True):
-        if write_dir:
-            self.save_file_path = write_dir
-        if not os.path.exists(self.save_file_path):
-            os.makedirs(self.save_file_path, exist_ok=True)
-
-        save_path = self.saver.save(self.sess, os.path.join(self.save_file_path, self.save_prefix),
-                                    write_meta_graph=write_meta_graph)
-        print("VAE Model saved in path: {}".format(save_path))
-
-    def __del__(self):
-        if self.writer:
-            self.writer.close()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.writer:
-            self.writer.close()
-
-        # # Testing
-        # # Generator takes noise as input
-        # noise_input = tf.placeholder(tf.float32, shape=[None, self.latent_dim])
-        # # Rebuild the decoder to create image from noise
-        # decoder = tf.matmul(noise_input, self.weights['decoder_h1']) + self.biases['decoder_b1']
-        # decoder = tf.nn.tanh(decoder)
-        # decoder = tf.matmul(decoder, self.weights['decoder_out']) + self.biases['decoder_out']
-        # decoder = tf.nn.sigmoid(decoder)
-        #
-        # # Building a manifold of generated digits
-        # n = 20
-        # x_axis = np.linspace(-3, 3, n)
-        # y_axis = np.linspace(-3, 3, n)
-        #
-        # canvas = np.empty((28 * n, 28 * n))
-        # for i, yi in enumerate(x_axis):
-        #     for j, xi in enumerate(y_axis):
-        #         z_mu = np.array([[xi, yi]] * batch_size)
-        #         x_mean = sess.run(decoder, feed_dict={noise_input: z_mu})
-        #         canvas[(n - i - 1) * 28:(n - i) * 28, j * 28:(j + 1) * 28] = \
-        #         x_mean[0].reshape(28, 28)
-        #
-        # plt.figure(figsize=(8, 10))
-        # Xi, Yi = np.meshgrid(x_axis, y_axis)
-        # plt.imshow(canvas, origin="upper", cmap="gray")
-        # plt.show()
-
+if __name__ == '__main__':
+    rnn = StateRNN()
+    print("yo")

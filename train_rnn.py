@@ -1,141 +1,119 @@
 
-
-from vae_keras import VAE
-from staternn import StateRNN
+from state_rnn import StateRNN
 import argparse
 import random
 import math
 import numpy as np
 import os
+import re
+import pickle
+import tensorflow as tf
+import multiprocessing
 import cv2
 
-ACTION_DIMS = 5
+MAX_SEQUENCES_PER_RNN_TF_RECORD = 5
 
-def action_for_index(index):
-    actions = [(0, 0), (0.5, 0), (0.5, 90), (0.5, 180), (0.5, -90)]
-    action = actions[index]
-    return (0, (action[0], math.radians(action[1])))
-
-def main(args):
-    os.environ['SDL_VIDEODRIVER'] = 'dummy'
-
-    vae = VAE()
-    vae.load_model(args.load_vae_weights)
-
-    rnn = StateRNN()
-
-    if args.load_rnn_weights:
-        rnn.load_model(args.load_rnn_weights)
-
-    game = BoxPush(display_width=64, display_height=64)
-    p = ContinousPLE(game, fps=30, display_screen=False, add_noop_action=False)
-    p.init()
-    total_frames = 0
-    total_episodes = 0
-    episodes_to_train_on = 300000
-    batches = 0
-
-    max_sequence_length = 257
-
-    for j in range(episodes_to_train_on):
-
-        # print("new episode")
-
-        p.reset_game()
-        action_index = 0
-        p.act(action_for_index(action_index))
-
-        last_observation = None
-        last_action = None
-
-        continue_game = True
-
-        while continue_game:
+def get_numbered_tfrecord_file_names_from_directory(dir, prefix):
+    dir_files = os.listdir(dir)
+    dir_files = sorted(filter(lambda f: str.isdigit(re.split('[_.]+', f)[1]) and f.startswith(prefix), dir_files),
+                       key=lambda f: int(re.split('[_.]+', f)[1]))
+    return list(map(lambda f: os.path.join(dir, f), dir_files))
 
 
-            obs_sequence = np.zeros(shape=(max_sequence_length, 64, 64, 3), dtype=np.float32)
-            if last_observation is not None:
-                obs_sequence[0] = last_observation
+def get_rnn_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=1):
+    prefix = 'rnn'
+    input_file_names = get_numbered_tfrecord_file_names_from_directory(dir=train_data_dir, prefix=prefix)
 
-            action_sequence = np.zeros(shape=(max_sequence_length, ACTION_DIMS), dtype=np.float32)
-            if last_action is not None:
-                action_sequence[0] = last_action
+    if len(input_file_names) <= 0:
+        raise FileNotFoundError("No usable tfrecords with prefix \'{}\' were found at {}".format(
+            prefix, train_data_dir)
+        )
 
-            sequence_length = 0
+    def decode_pickled_np_array(np_bytes):
+        return pickle.loads(np_bytes).astype(np.float32)
 
-            while True:
+    def decode_state_rnn_input_target_sequences(np_bytes, sequence_length, latent_dims):
+        sequence = decode_pickled_np_array(np_bytes)
 
-                observation = np.swapaxes(p.getScreenRGB(), 0, 1) / 255.0
-                obs_sequence[sequence_length] = observation
+        # input to rnn is sequence[n] (latent dim + actions], target is sequence[n+1] (latent dim only)
+        input_sequence = np.copy(sequence[:-1])
 
-                if random.random() < 0.05:
-                    action_index = random.randint(0, ACTION_DIMS-1)
+        # remove last entry from input as it should only belong in the target sequence
+        if len(sequence) > sequence_length:
+            input_sequence[sequence_length - 1] = 0
 
-                action_sequence[sequence_length, action_index] = 1
+        target_sequence = sequence[1:, :latent_dims]
 
-                # visualization ###
-                if args.visualize and sequence_length >= 1:
-                    prev_action_onehot = np.expand_dims(action_sequence[sequence_length-1], axis=0)
-                    encoded_prev_obs = vae.vae_encoder.predict(np.expand_dims(obs_sequence[sequence_length-1], axis=0))
+        # print("target_sequence: {} input sequence: {}\nlast in overall sequence: {}\nlength: {}\n".format(target_sequence[sequence_length-2,0],
+        #                                                                                     input_sequence[sequence_length-2,0],
+        #                                                                                     sequence[sequence_length-2,0],
+        #                                                                                                 sequence_length))
 
-                    rnn_input = np.expand_dims(np.concatenate((encoded_prev_obs, prev_action_onehot), axis=1), axis=0)
-                    cv2.imshow("predicted", np.squeeze(vae.decode(rnn.rnn.predict(rnn_input)[0]))[:,:,::-1])
-                    cv2.waitKey(1)
+        return input_sequence, target_sequence
 
-                    cv2.imshow("actual", np.squeeze(vae.vae.predict(np.expand_dims(observation, axis=0)))[:, :, ::-1])
-                    cv2.waitKey(1)
+    def parse_fn(example):
+        example_fmt = {
+            "sequence_bytes": tf.FixedLenFeature([], tf.string),
+            "sequence_length": tf.FixedLenFeature([], tf.int64),
+            "latent_dims": tf.FixedLenFeature([], tf.int64)
+        }
 
-                #####
+        parsed = tf.parse_single_example(example, example_fmt)
 
-                p.act(action_for_index(action_index))
-                sequence_length += 1
+        sequence_bytes = parsed["sequence_bytes"]
+        sequence_length = parsed["sequence_length"]
+        latent_dims = parsed["latent_dims"]
 
-                r = random.random()
-                if r < 0.005 or p.game_over():
-                    continue_game = False
-                    # break
+        input_sequence, target_sequence = tf.py_func(func=decode_state_rnn_input_target_sequences,
+                                                     inp=[sequence_bytes, sequence_length, latent_dims],
+                                                     Tout=(tf.float32, tf.float32),
+                                                     stateful=False,
+                                                     name='decode_np_bytes')
 
-                if sequence_length >= max_sequence_length:
-                    break
+        return input_sequence, target_sequence, sequence_length-1
 
-            # print("batch had {} steps".format(sequence_length))
+    def extract_and_shuffle_fn(file_tensor):
+        return tf.data.TFRecordDataset(file_tensor).shuffle(buffer_size=MAX_SEQUENCES_PER_RNN_TF_RECORD)
 
-            last_observation = obs_sequence[-1]
-            last_action = action_sequence[-1]
+    def input_fn():
+        file_names = tf.constant(input_file_names, dtype=tf.string, name='input_file_names')
+        file_tensors = tf.data.Dataset.from_tensor_slices(file_names).shuffle(len(input_file_names))
 
-            # print(vae.vae_encoder.predict(obs_sequence).shape)
-            encoded_observations = vae.vae_encoder.predict(obs_sequence)
-            rnn_sequence = np.expand_dims(np.concatenate((encoded_observations, action_sequence), axis=1), axis=0)
-            # print("rnn sequence shape: {}".format(rnn_sequence.shape))
+        # Shuffle frames in each episode/tfrecords file, then draw a frame from each episode/tfrecords file in a cycle
+        dataset = file_tensors.interleave(map_func=extract_and_shuffle_fn,
+                                          cycle_length=80,
+                                          block_length=1)
 
-            rnn_inputs = rnn_sequence[:, :-1, :]
-            rnn_targets = rnn_sequence[:, 1:, :-ACTION_DIMS]
+        # Shuffle drawn sequences
+        dataset = dataset.shuffle(buffer_size=200)
 
-            # if not np.array_equal(rnn_targets,np.expand_dims(encoded_observations[1:], axis=0)):
-            #     print("try again")
-            #     print("rrn targers: {}".format(rnn_targets))
-            #     print("check: {}".format(np.expand_dims(encoded_observations[1:], axis=0)))
-            #
-            #     exit(1)
-            # print("rnn inputs shape: {}".format(rnn_inputs.shape))
-            # print("rnn targets shape: {}".format(rnn_targets.shape))
+        # Parse tfrecords into frames
+        dataset = dataset.map(map_func=parse_fn, num_parallel_calls=multiprocessing.cpu_count())
 
-            print(rnn.rnn.train_on_batch(x=rnn_inputs, y=rnn_targets))
-            batches += 1
-            if batches % 20 == 0:
-                print("Finished batch {}".format(batches))
-            if batches % 1000 == 0:
-                path = "rnn_weights.hdf5"
-                rnn.save_model(path)
-                print("saved rnn weights to {}".format(path))
+        dataset = dataset.batch(batch_size=batch_size)
+        dataset = dataset.repeat(num_epochs)  # the input is repeated indefinitely if num_epochs is None
+        dataset = dataset.prefetch(buffer_size=10)
+
+        iterator = dataset.make_one_shot_iterator()
+        return iterator.get_next()
+
+    return input_fn
+
+
+def train_state_rnn(rnn):
+    train_data_dir = 'rnn_tf_records'
+
+    input_fn = get_rnn_tfrecord_input_fn(train_data_dir, batch_size=64, num_epochs=500)
+
+    rnn.train_on_input_fn(input_fn)
+
+
+
+def main():
+
+    state_rnn = StateRNN()
+    train_state_rnn(state_rnn)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--load-vae-weights", help="path to start VAE weights with",
-                        type=str, required=True)
-    parser.add_argument("--load-rnn-weights", help="path to start RNN weights with",
-                        type=str, required=False)
-    parser.add_argument("--visualize", help="visualize predictions",
-                        action="store_true")
-    args = parser.parse_args()
-    main(args)
+
+    main()

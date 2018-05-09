@@ -108,11 +108,16 @@ def convert_vae_record_to_rnn_records(vae_model_dir, vae_data_read_dir, rnn_data
                 sequence[sequence_index] = sample_entry
                 sequence_length += 1
 
-            if sequence_length > 0:
+            # Must have at least two frames to be suitable for RNN training
+            if sequence_length >= 2:
 
                 sequence_lengths.append(sequence_length)
 
                 sequence_bytes = pickle.dumps(sequence)
+
+                # print(sequence[:-4:,0])
+                # print(sequence[sequence_length-1, 0])
+                # print(sequence[-1, 0])
 
                 # save sequence, its length, and the size of the frame encoding
                 example = tf.train.Example(features=tf.train.Features(feature={

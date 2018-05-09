@@ -47,10 +47,16 @@ def get_numbered_tfrecord_file_names_from_directory(dir, prefix):
 
 
 def get_vae_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=1):
-    input_file_names = get_numbered_tfrecord_file_names_from_directory(dir=train_data_dir, prefix='vae')
+    prefix = 'vae'
+    input_file_names = get_numbered_tfrecord_file_names_from_directory(dir=train_data_dir, prefix=prefix)
 
-    def decode_pickled_np_array(bytes):
-        return pickle.loads(bytes).astype(np.float32)
+    if len(input_file_names) <= 0:
+        raise FileNotFoundError("No usable tfrecords with prefix \'{}\' were found at {}".format(
+            prefix, train_data_dir)
+        )
+
+    def decode_pickled_np_array(np_bytes):
+        return pickle.loads(np_bytes).astype(np.float32)
 
     def parse_fn(example):
         example_fmt = {
@@ -99,7 +105,7 @@ def get_vae_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=1):
 def train_vae(vae):
     train_data_dir = 'vae_tf_records'
 
-    input_fn = get_vae_tfrecord_input_fn(train_data_dir, batch_size=128, num_epochs=20)
+    input_fn = get_vae_tfrecord_input_fn(train_data_dir, batch_size=128, num_epochs=200)
 
     vae.train_on_input_fn(input_fn)
 

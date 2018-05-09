@@ -125,7 +125,7 @@ class VAE:
                 with tf.name_scope('loss'):
                     with tf.name_scope('kl_div_loss'):
                         self.kl_div_loss = tf.reduce_mean(
-                            100 * -0.5 * tf.reduce_mean(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=-1)
+                            -0.5 * tf.reduce_mean(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=-1)
                         )
                         tf.summary.scalar('kl_div_loss', self.kl_div_loss)
 
@@ -144,7 +144,8 @@ class VAE:
             # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
             # Initialize the variables (i.e. assign their default value)
             self.tf_summaries_merged = tf.summary.merge_all()
-            self.saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope))
+            self.saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope),
+                                        max_to_keep=None)
             self.init = tf.global_variables_initializer()
 
         if restore_from_dir:
@@ -184,6 +185,9 @@ class VAE:
 
                 if step % 50 == 0 or step == 1:
                     print('Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
+
+                if step % 30000 == 0:
+                    self.save_model(write_dir="128-dim/step_{}".format(step))
 
                 if steps and step >= steps:
                     print("Completed {} steps".format(steps))
