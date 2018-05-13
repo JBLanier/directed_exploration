@@ -99,7 +99,7 @@ if __name__ == '__main__':
     parser.add_argument("--write-dir", help="Directory to save tfrecords files to",
                         type=str, default='vae_tf_records')
     parser.add_argument("--num-processes", help="Number of concurrent process to generate rollouts",
-                        type=int, default=10)
+                        type=int, default=12)
     parser.add_argument("--max-episode-length", help="Maximum length of any single episode",
                         type=int, default=1000)
     args = parser.parse_args()

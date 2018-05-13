@@ -82,12 +82,13 @@ def get_vae_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=1):
         file_tensors = tf.data.Dataset.from_tensor_slices(file_names).shuffle(len(input_file_names))
 
         # Shuffle frames in each episode/tfrecords file, then draw a frame from each episode/tfrecords file in a cycle
+        cycle_length = 200
         dataset = file_tensors.interleave(map_func=extract_and_shuffle_fn,
-                                          cycle_length=40,
+                                          cycle_length=cycle_length,
                                           block_length=1)
 
         # Shuffle drawn frames
-        dataset = dataset.shuffle(buffer_size=200)
+        dataset = dataset.shuffle(buffer_size=cycle_length*3)
 
         # Parse tfrecords into frames
         dataset = dataset.map(map_func=parse_fn, num_parallel_calls=multiprocessing.cpu_count())
@@ -102,10 +103,9 @@ def get_vae_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=1):
     return input_fn
 
 
-def train_vae(vae):
-    train_data_dir = 'vae_tf_records'
+def train_vae(vae, train_data_dir):
 
-    input_fn = get_vae_tfrecord_input_fn(train_data_dir, batch_size=128, num_epochs=200)
+    input_fn = get_vae_tfrecord_input_fn(train_data_dir, batch_size=256, num_epochs=1)
 
     vae.train_on_input_fn(input_fn)
 
@@ -141,11 +141,11 @@ def debug_play(vae):
             if event.type == pygame.QUIT:  # If user clicked close
                 done = True  # Flag that we are done so we exit this loop
 
-            # Possible joystick actions: JOYAXISMOTION JOYBALLMOTION JOYBUTTONDOWN JOYBUTTONUP JOYHATMOTION
-            if event.type == pygame.JOYBUTTONDOWN:
-                print("Joystick button pressed.")
-            if event.type == pygame.JOYBUTTONUP:
-                print("Joystick button released.")
+            # # Possible joystick actions: JOYAXISMOTION JOYBALLMOTION JOYBUTTONDOWN JOYBUTTONUP JOYHATMOTION
+            # if event.type == pygame.JOYBUTTONDOWN:
+            #     print("Joystick button pressed.")
+            # if event.type == pygame.JOYBUTTONUP:
+            #     print("Joystick button released.")
 
         joystick = pygame.joystick.Joystick(0)
         joystick.init()
@@ -221,7 +221,11 @@ def main(args):
     print("RESTORE FROM DIR: {}".format(args.load_vae_weights))
     vae = VAE(restore_from_dir=args.load_vae_weights)
     if args.train_vae:
-        train_vae(vae)
+        if args.train_data_dir:
+            train_vae(vae, args.train_data_dir)
+        else:
+            print("Must specify --train-data-dir")
+            exit(0)
     if args.debug_play:
         debug_play(vae)
     # if args.debug_latent_space:
@@ -234,6 +238,8 @@ if __name__ == '__main__':
                         type=str, default=None)
     parser.add_argument("--train-vae", help="if true, train VAE",
                         action="store_true")
+    parser.add_argument("--train-data-dir", help="VAE training data location",
+                       type=str)
     parser.add_argument("--debug-play", help="use controller to debug environment",
                         action="store_true")
     parser.add_argument("--debug-latent-space", help="play with latent space variables",

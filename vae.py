@@ -28,17 +28,24 @@ class VAE:
         self.sess = tf.Session(graph=self.graph)
         self.latent_dim = latent_dim
         self.save_prefix = 'vae'
-        self.date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        self.save_file_path = './vae_model_{}'.format(self.date_identifier)
+        date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        if restore_from_dir:
+            self.save_metagraph = False
+            self.identifier = restore_from_dir.split('/')[-1]
+            self.save_file_path = restore_from_dir
+        else:
+            self.save_metagraph = True
+            self.identifier = '{}_{}dim_{}'.format(self.save_prefix, self.latent_dim, date_identifier)
+            self.save_file_path = './' + self.identifier
+
         self.tensorboard_path = './tensorboard'
 
         self._build_model(restore_from_dir)
 
-        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.date_identifier), self.graph)
+        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.identifier), self.graph)
 
     def _restore_model(self, from_dir):
         print("\n\nRestoring Model from {}".format(from_dir))
-        # self.save_file_path = from_dir
         with self.graph.as_default():
             # self.saver = tf.train.import_meta_graph(os.path.join(self.save_file_path, self.save_prefix + '.meta'))
             self.saver.restore(self.sess, tf.train.latest_checkpoint(from_dir))
@@ -57,19 +64,19 @@ class VAE:
 
                 encode_1 = tf.layers.Conv2D(filters=32, kernel_size=4, strides=2,
                                             padding='valid', activation=tf.nn.relu,
-                                            kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
+                                            kernel_initializer=variance_scaling,
                                             name='encode_1')(self.x)
                 encode_2 = tf.layers.Conv2D(filters=64, kernel_size=4, strides=2,
                                             padding='valid', activation=tf.nn.relu,
-                                            kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
+                                            kernel_initializer=variance_scaling,
                                             name='encode_2')(encode_1)
                 encode_3 = tf.layers.Conv2D(filters=128, kernel_size=4, strides=2,
                                             padding='valid', activation=tf.nn.relu,
-                                            kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
+                                            kernel_initializer=variance_scaling,
                                             name='encode_3')(encode_2)
                 encode_4 = tf.layers.Conv2D(filters=256, kernel_size=4, strides=2,
                                             padding='valid', activation=tf.nn.relu,
-                                            kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
+                                            kernel_initializer=variance_scaling,
                                             name='encode_4')(encode_3)
                 vae_flatten = tf.layers.Flatten()(encode_4)
 
@@ -89,17 +96,17 @@ class VAE:
 
                 decode_1 = tf.layers.Conv2DTranspose(filters=128, kernel_size=5, strides=2,
                                                      padding='valid', activation=tf.nn.relu,
-                                                     kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
+                                                     kernel_initializer=variance_scaling,
                                                      name='decode_1')
 
                 decode_2 = tf.layers.Conv2DTranspose(filters=64, kernel_size=5, strides=2,
                                                      padding='valid', activation=tf.nn.relu,
-                                                     kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
+                                                     kernel_initializer=variance_scaling,
                                                      name='decode_2')
 
                 decode_3 = tf.layers.Conv2DTranspose(filters=32, kernel_size=6, strides=2,
                                                      padding='valid', activation=tf.nn.relu,
-                                                     kernel_initializer=variance_scaling, bias_initializer=variance_scaling,
+                                                     kernel_initializer=variance_scaling,
                                                      name='decode_3')
 
                 decode_4 = tf.layers.Conv2DTranspose(filters=3, kernel_size=6, strides=2,
@@ -139,13 +146,19 @@ class VAE:
                     tf.summary.scalar('total_loss', self.loss)
 
             self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)
-            self.train_op = self.optimizer.minimize(self.loss)
+            self.global_step = tf.Variable(0, name='global_step', trainable=False)
+            self.train_op = self.optimizer.minimize(self.loss, global_step=self.global_step)
             # self.check_op = tf.add_check_numerics_ops()
             # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
             # Initialize the variables (i.e. assign their default value)
             self.tf_summaries_merged = tf.summary.merge_all()
-            self.saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope),
-                                        max_to_keep=None)
+
+            save_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)
+            save_var_list.append(self.global_step)
+            self.saver = tf.train.Saver(var_list=save_var_list,
+                                        max_to_keep=5,
+                                        keep_checkpoint_every_n_hours=1)
+
             self.init = tf.global_variables_initializer()
 
         if restore_from_dir:
@@ -153,7 +166,7 @@ class VAE:
         else:
             self.sess.run(self.init)
 
-    def train_on_input_fn(self, input_fn, steps=None):
+    def train_on_input_fn(self, input_fn, steps=None, save_every_n_steps=30000):
 
         sess = self.sess
 
@@ -166,34 +179,38 @@ class VAE:
             with tf.name_scope("input_fn"):
                 iter = input_fn()
 
-            step = 1
+            local_step = 1
             while True:
 
                 try:
                     batch_x = sess.run(iter)
                 except tf.errors.OutOfRangeError:
-                    print("Input_fn ended at step {}".format(step))
+                    print("Input_fn ended at step {}".format(local_step))
                     break
 
                 # Train
                 feed_dict = {self.x: batch_x}
-                _, l, kl, r, summaries = sess.run([self.train_op, self.loss, self.kl_div_loss,
-                                             self.reconstruction_loss, self.tf_summaries_merged],
-                                            feed_dict=feed_dict)
+                _, l, kl, r, summaries, global_step = sess.run([self.train_op,
+                                                                self.loss,
+                                                                self.kl_div_loss,
+                                                                self.reconstruction_loss,
+                                                                self.tf_summaries_merged,
+                                                                self.global_step],
+                                                               feed_dict=feed_dict)
 
-                self.writer.add_summary(summaries, step)
+                self.writer.add_summary(summaries, local_step)
 
-                if step % 50 == 0 or step == 1:
-                    print('Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
+                if local_step % 50 == 0 or local_step == 1:
+                    print('Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (global_step, l, kl, r))
 
-                if step % 30000 == 0:
-                    self.save_model(write_dir="128-dim/step_{}".format(step))
+                if local_step % save_every_n_steps == 0:
+                    self.save_model()
 
-                if steps and step >= steps:
+                if steps and local_step >= steps:
                     print("Completed {} steps".format(steps))
                     break
 
-                step += 1
+                local_step += 1
 
     def encode_frames(self, float_frames):
         return self.sess.run(self.z_encoded, feed_dict={self.x: float_frames})
@@ -204,14 +221,17 @@ class VAE:
     def encode_decode_frames(self, float_frames):
         return self.sess.run(self.decoded_encoded, feed_dict={self.x: float_frames})
 
-    def save_model(self, write_dir=None, write_meta_graph=True):
-        if write_dir:
-            self.save_file_path = write_dir
+    def save_model(self):
         if not os.path.exists(self.save_file_path):
             os.makedirs(self.save_file_path, exist_ok=True)
 
-        save_path = self.saver.save(self.sess, os.path.join(self.save_file_path, self.save_prefix),
-                                    write_meta_graph=write_meta_graph)
+        save_path = self.saver.save(sess=self.sess,
+                                    save_path=os.path.join(self.save_file_path, self.save_prefix),
+                                    write_meta_graph=self.save_metagraph,
+                                    global_step=self.global_step)
+
+        self.save_metagraph = False
+
         print("VAE Model saved in path: {}".format(save_path))
 
     def __del__(self):
@@ -222,30 +242,4 @@ class VAE:
         if self.writer:
             self.writer.close()
 
-        # # Testing
-        # # Generator takes noise as input
-        # noise_input = tf.placeholder(tf.float32, shape=[None, self.latent_dim])
-        # # Rebuild the decoder to create image from noise
-        # decoder = tf.matmul(noise_input, self.weights['decoder_h1']) + self.biases['decoder_b1']
-        # decoder = tf.nn.tanh(decoder)
-        # decoder = tf.matmul(decoder, self.weights['decoder_out']) + self.biases['decoder_out']
-        # decoder = tf.nn.sigmoid(decoder)
-        #
-        # # Building a manifold of generated digits
-        # n = 20
-        # x_axis = np.linspace(-3, 3, n)
-        # y_axis = np.linspace(-3, 3, n)
-        #
-        # canvas = np.empty((28 * n, 28 * n))
-        # for i, yi in enumerate(x_axis):
-        #     for j, xi in enumerate(y_axis):
-        #         z_mu = np.array([[xi, yi]] * batch_size)
-        #         x_mean = sess.run(decoder, feed_dict={noise_input: z_mu})
-        #         canvas[(n - i - 1) * 28:(n - i) * 28, j * 28:(j + 1) * 28] = \
-        #         x_mean[0].reshape(28, 28)
-        #
-        # plt.figure(figsize=(8, 10))
-        # Xi, Yi = np.meshgrid(x_axis, y_axis)
-        # plt.imshow(canvas, origin="upper", cmap="gray")
-        # plt.show()
 
