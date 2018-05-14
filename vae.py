@@ -31,7 +31,7 @@ class VAE:
         date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         if restore_from_dir:
             self.save_metagraph = False
-            self.identifier = restore_from_dir.split('/')[-1]
+            self.identifier = os.path.basename(os.path.normpath(restore_from_dir))
             self.save_file_path = restore_from_dir
         else:
             self.save_metagraph = True
@@ -138,11 +138,11 @@ class VAE:
 
                     with tf.name_scope('reconstruction_loss'):
                         self.reconstruction_loss = tf.reduce_mean(
-                            1000 * tf.reduce_mean(tf.square(self.x - self.decoded_encoded), axis=[1, 2, 3])
+                            tf.reduce_sum(tf.square(self.x - self.decoded_encoded), axis=[1, 2, 3])
                         )
                         tf.summary.scalar('reconstruction_loss', self.reconstruction_loss)
 
-                    self.loss = self.kl_div_loss + self.reconstruction_loss
+                    self.loss = self.kl_div_loss * 10 + self.reconstruction_loss / 100
                     tf.summary.scalar('total_loss', self.loss)
 
             self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)

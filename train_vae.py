@@ -82,7 +82,7 @@ def get_vae_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=1):
         file_tensors = tf.data.Dataset.from_tensor_slices(file_names).shuffle(len(input_file_names))
 
         # Shuffle frames in each episode/tfrecords file, then draw a frame from each episode/tfrecords file in a cycle
-        cycle_length = 200
+        cycle_length = 120
         dataset = file_tensors.interleave(map_func=extract_and_shuffle_fn,
                                           cycle_length=cycle_length,
                                           block_length=1)
@@ -105,7 +105,7 @@ def get_vae_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=1):
 
 def train_vae(vae, train_data_dir):
 
-    input_fn = get_vae_tfrecord_input_fn(train_data_dir, batch_size=256, num_epochs=1)
+    input_fn = get_vae_tfrecord_input_fn(train_data_dir, batch_size=256, num_epochs=5)
 
     vae.train_on_input_fn(input_fn)
 
@@ -127,8 +127,8 @@ def train_vae(vae, train_data_dir):
     #                       callbacks=[checkpoint_callback, tensorboard_callback])
 
 
-def debug_play(vae):
-    env = gym.make('boxpush-v0')
+def debug_play(vae, env_name):
+    env = gym.make(env_name)
     env.reset()
 
     pygame.init()
@@ -177,59 +177,65 @@ def debug_play(vae):
         # time.sleep((15.4444444 - (time.time() - frame_start_time)) * 0.001)
 
 
-# def debug_latent_space(vae):
-#
-#
-#     def show_values(a):
-#         global last_scale_adjust_time
-#         if time.time() - last_scale_adjust_time > 0.1:
-#             new_z = []
-#             for w in scales:
-#                 new_z.append(w.get())
-#             cv2.imshow("decoded", np.squeeze(vae.decode(np.expand_dims(new_z,axis=0))))
-#             cv2.waitKey(1)
-#             last_scale_adjust_time = time.time()
-#
-#     game = BoxPush(display_width=64, display_height=64)
-#     p = ContinousPLE(game, fps=30, display_screen=False, add_noop_action=False)
-#     p.init()
-#     p.act((0,(0,0)))
-#     p.act((0,(0,0)))
-#     observation = np.swapaxes(p.getScreenRGB(), 0, 1) / 255.0
-#     p.quit()
-#     z = np.squeeze(vae.encode(np.expand_dims(observation,axis=0)))
-#     cv2.imshow("decoded", np.squeeze(vae.decode(np.expand_dims(z,axis=0))))
-#
-#     print("z shape: {}", format(z.shape))
-#
-#     master = Tk()
-#     scales = []
-#
-#     for i in range(len(z)):
-#         w = Scale(master, from_=-3.0, to=3.0, orient=HORIZONTAL, command=show_values, resolution=0.01, width=5,
-#                   length=200, showvalue=False)
-#         w.set(z[i])
-#         w.pack()
-#         scales.append(w)
-#
-#
-#     master.mainloop()
-#
-#     print("done debugging latent space")
+def debug_latent_space(vae, env_name):
+
+    def show_values(a):
+        global last_scale_adjust_time
+        if time.time() - last_scale_adjust_time > 0.1:
+            new_z = []
+            for w in scales:
+                new_z.append(w.get())
+            cv2.imshow("decoded", np.squeeze(vae.decode_frames(np.expand_dims(new_z, axis=0))))
+            cv2.waitKey(1)
+            last_scale_adjust_time = time.time()
+
+    env = gym.make(env_name)
+    observation = env.reset()
+    env.close()
+
+    z = vae.encode_frames(np.expand_dims(observation, axis=0))
+    cv2.imshow("decoded", np.squeeze(vae.decode_frames(z)))
+
+    print("z shape: {}".format(z.shape))
+    z = z[0]
+    print("Starting z:\n{}".format(z))
+
+    master = Tk()
+    scales = []
+
+    for i in range(len(z)):
+        w = Scale(master, from_=-4.0, to=4.0, orient=HORIZONTAL, command=show_values, resolution=0.01, width=5,
+                  length=200, showvalue=False)
+        w.set(z[i])
+        w.pack()
+        scales.append(w)
+
+    master.mainloop()
+
+    print("done debugging latent space")
+
 
 def main(args):
     print("RESTORE FROM DIR: {}".format(args.load_vae_weights))
-    vae = VAE(restore_from_dir=args.load_vae_weights)
+    vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=1)
     if args.train_vae:
         if args.train_data_dir:
             train_vae(vae, args.train_data_dir)
         else:
             print("Must specify --train-data-dir")
-            exit(0)
+            exit(1)
     if args.debug_play:
-        debug_play(vae)
-    # if args.debug_latent_space:
-    #     debug_latent_space(vae)
+        if args.load_vae_weights:
+            debug_play(vae, args.env)
+        else:
+            print("Must specify --load-vae-weights")
+            exit(1)
+    if args.debug_latent_space:
+        if args.load_vae_weights:
+            debug_latent_space(vae, args.env)
+        else:
+            print("Must specify --load-vae-weights")
+            exit(1)
 
 
 if __name__ == '__main__':
@@ -243,7 +249,9 @@ if __name__ == '__main__':
     parser.add_argument("--debug-play", help="use controller to debug environment",
                         action="store_true")
     parser.add_argument("--debug-latent-space", help="play with latent space variables",
-                        action="store_true", default=True)
+                        action="store_true")
+    parser.add_argument("--env", help="environment to use",
+                        type=str, default='boxpushsimple-v0')
     args = parser.parse_args()
     main(args)
 

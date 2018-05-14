@@ -25,7 +25,7 @@ def variable_summaries(var):
 
 class StateRNN:
 
-    def __init__(self, latent_dim=128, action_dim=2, restore_from_dir=None):
+    def __init__(self, latent_dim=4, action_dim=2, restore_from_dir=None):
         print("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
         self.graph = tf.Graph()
         self.sess = tf.Session(graph=self.graph)
@@ -35,7 +35,7 @@ class StateRNN:
         date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         if restore_from_dir:
             self.save_metagraph = False
-            self.identifier = restore_from_dir.split('/')[-1]
+            self.identifier = os.path.basename(os.path.normpath(restore_from_dir))
             self.save_file_path = restore_from_dir
         else:
             self.save_metagraph = True
@@ -46,7 +46,7 @@ class StateRNN:
 
         self._build_model(restore_from_dir)
 
-        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.save_file_path[2:]), self.graph)
+        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.identifier), self.graph)
 
         self.saved_state = None
 
@@ -88,7 +88,10 @@ class StateRNN:
                 # self.computed_lengths = tf.Print(self.computed_lengths,[self.computed_lengths, tf.shape(self.computed_lengths)], "Computed Lengths: ")
                 # self.sequence_lengths = tf.Print(self.sequence_lengths,[self.sequence_lengths, tf.shape(self.sequence_lengths)], "Passed Sequence Lengths: ")
 
-                lstm_cell = tf.nn.rnn_cell.LSTMCell(256)
+                lstm_cell =tf.nn.rnn_cell.MultiRNNCell([
+                    tf.nn.rnn_cell.LSTMCell(512),
+                    tf.nn.rnn_cell.LSTMCell(512),
+                ])
 
                 batch_size = tf.shape(self.sequence_inputs)[0]
                 self.lstm_state_in = lstm_cell.zero_state(batch_size, dtype=tf.float32)
@@ -106,19 +109,28 @@ class StateRNN:
                 # lstm_output_for_dense = tf.Print(lstm_output_for_dense, [reshaped_again[0,2,4], tf.shape(reshaped_again)], "lstm output put back")
 
                 dense1 = tf.layers.dense(inputs=lstm_output_for_dense,
-                                        units=1024,
+                                        units=512,
                                         activation=tf.nn.relu,
                                         kernel_initializer=variance_scaling)
 
                 dense2 = tf.layers.dense(inputs=dense1,
+                                         units=512,
+                                         activation=tf.nn.relu,
+                                         kernel_initializer=variance_scaling)
+
+                dense3 = tf.layers.dense(inputs=dense2,
+                                         units=256,
+                                         activation=tf.nn.relu,
+                                         kernel_initializer=variance_scaling)
+
+                dense4 = tf.layers.dense(inputs=dense3,
                                          units=self.latent_dim,
                                          activation=None,
-                                         kernel_initializer=variance_scaling,
-                                         bias_initializer=variance_scaling)
+                                         kernel_initializer=variance_scaling)
                 # dense2 = tf.Print(dense2,[dense2,tf.shape(dense2)], "dense 2 output: ")
 
                 # reshape dense output back to (batch_size, max_seq_length, ...)
-                self.output = tf.reshape(dense2, shape=[-1, tf.shape(self.sequence_inputs)[1], dense2.shape[-1]])
+                self.output = tf.reshape(dense4, shape=[-1, tf.shape(self.sequence_inputs)[1], dense4.shape[-1]])
 
                 # self.output = tf.Print(self.output, [self.output, tf.shape(self.output)], "dense 2 output reshaped: ")
                 # self.output = tf.Print(self.output, [self.computed_lengths, tf.shape(self.computed_lengths), self.sequence_lengths, tf.shape(self.sequence_lengths)], 'computed and given sequence lengths')
@@ -164,7 +176,6 @@ class StateRNN:
             self.sess.run(self.init)
 
     def train_on_input_fn(self, input_fn, steps=None):
-        # vae = VAE(restore_from_dir='vae_model_20180507133856')
 
         sess = self.sess
 

@@ -31,7 +31,7 @@ def _floats_feature(value):
 
 
 def write_random_episode_to_tf_record(episode_index, write_dir, max_episode_length):
-    env = gym.make('boxpush-v0')
+    env = gym.make('boxpushsimple-v0')
 
     filename = os.path.join(write_dir, 'vae_{}.tfrecords'.format(episode_index))
     writer = tf.python_io.TFRecordWriter(filename)
