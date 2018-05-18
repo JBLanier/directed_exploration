@@ -97,7 +97,7 @@ def write_new_random_boxpush_simple_rollout_rnn_tf_record(episode_index, rnn_dat
                 action_index = random.randint(0, len(actions) - 1)
 
             action = np.asarray(actions[action_index])
-            location = (env.player.center[0] - 50) / 50
+            location = env.debug_get_player_location()
             if location == 0:
                 location += 0.000001
             encoded_sequence[sequence_index] = location
@@ -217,7 +217,7 @@ def convert_vae_record_to_rnn_records(vae_model_dir, vae_data_read_dir, rnn_data
 
     vae_tf_records_files = get_numbered_tfrecord_file_names_from_directory(dir=vae_data_read_dir, prefix='vae')
 
-    vae = VAE(restore_from_dir=vae_model_dir, latent_dim=4)
+    vae = VAE(restore_from_dir=vae_model_dir, latent_dim=1)
 
     with multiprocessing.pool.ThreadPool(processes=args.num_workers) as pool:
         episode_sequence_lengths = pool.starmap(write_vae_episode_to_rnn_tf_record,

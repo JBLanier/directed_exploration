@@ -129,7 +129,7 @@ def get_rnn_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=None):
 
 
 def train_state_rnn(rnn, train_data_dir):
-    input_fn = get_rnn_tfrecord_input_fn(train_data_dir, batch_size=64, num_epochs=5)
+    input_fn = get_rnn_tfrecord_input_fn(train_data_dir, batch_size=64, num_epochs=40)
 
     rnn.train_on_input_fn(input_fn)
 
@@ -139,7 +139,6 @@ def train_state_rnn(rnn, train_data_dir):
 def debug_play(rnn, vae):
     env = gym.make('boxpushsimple-v0')
     frame = env.reset()
-    encoded_frame = vae.encode_frames(np.expand_dims(frame, 0))
     rnn.reset_state()
 
     action = np.array([0.0, 0.0])
@@ -147,7 +146,8 @@ def debug_play(rnn, vae):
     from pyglet.window import key
 
     def key_press(k, mod):
-        if k == key.LEFT:  action[:] = random.sample([[1, 1], [1, -1]], 1)[0]
+        if k == key.LEFT:  action[:] = [1, -1]
+        # if k == key.LEFT:  action[:] = random.sample([[1, 1], [1, -1]], 1)[0]
         if k == key.RIGHT: action[:] = [1, 0]
         if k == key.UP:    action[:] = [1, 0.5]
         if k == key.DOWN:  action[:] = [1, -0.5]
@@ -172,6 +172,43 @@ def debug_play(rnn, vae):
         cv2.imshow("predicted_decoded", np.squeeze(vae.decode_frames(prediction[:, 0, ...]))[:, :, ::-1])
         prediction = rnn.predict_on_frames(prediction[:, 0, ...], np.expand_dims(action, 0))
         cv2.imshow("orig", frame[:, :, ::-1])
+
+        cv2.waitKey(1)
+
+
+def debug_play_box_simple_no_vae(rnn):
+    env = gym.make('boxpushsimple-v0')
+    actual_frame = env.reset()
+    prediction = np.reshape(env.debug_get_player_location(), [1, rnn.latent_dim])
+    rnn.reset_state()
+
+    action = np.array([0.0, 0.0])
+
+    from pyglet.window import key
+
+    def key_press(k, mod):
+        if k == key.LEFT:  action[:] = [1, -1]
+        if k == key.RIGHT: action[:] = [1, 0]
+
+    def key_release(k, mod):
+        if k == key.LEFT and np.all(action == [1, -1]):  action[:] = [0, 0]
+        if k == key.RIGHT and np.all(action == [1, 0]):  action[:] = [0, 0]
+
+    env.viewer.window.on_key_press = key_press
+    env.viewer.window.on_key_release = key_release
+
+    while True:
+        env.render()
+        predicted_frame = env.debug_show_player_at_location(np.expand_dims(np.squeeze(prediction), 0))
+
+        debug_imshow_image_with_action(actual_frame, action, window_label='actual frame')
+        debug_imshow_image_with_action(predicted_frame, action, window_label='predicted frame')
+
+        # print(prediction.shape)
+        # print(action.shape)
+
+        prediction = rnn.predict_on_frames(np.reshape(prediction, [1, rnn.latent_dim]), np.expand_dims(action, 0))
+        actual_frame, _, _, _ = env.step(action)
 
         cv2.waitKey(1)
 
@@ -288,9 +325,11 @@ def main(args):
             exit(1)
 
     if args.debug_play:
-        if args.load_vae_weights and args.load_rnn_weights:
+        if args.load_vae_weights and args.load_rnn_weights and not args.simple_encoding:
             vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=state_rnn.latent_dim)
             debug_play(state_rnn, vae)
+        elif args.load_rnn_weights and args.simple_encoding:
+            debug_play_box_simple_no_vae(state_rnn)
         else:
             print("Must specify \n--load-vae-weights=<vae weights dir> and\n --load-rnn-weights=<rnn weights dir>")
             exit(1)
