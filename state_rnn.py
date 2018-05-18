@@ -5,61 +5,29 @@ from scipy.stats import norm
 import tensorflow as tf
 import os
 import datetime
+from model import Model
 import cv2
 from vae import VAE
 from tensorflow.python import debug as tf_debug
 
 
-def variable_summaries(var):
-  """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
-  with tf.name_scope('summaries'):
-    mean = tf.reduce_mean(var)
-    tf.summary.scalar('mean', mean)
-    with tf.name_scope('stddev'):
-      stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-    tf.summary.scalar('stddev', stddev)
-    tf.summary.scalar('max', tf.reduce_max(var))
-    tf.summary.scalar('min', tf.reduce_min(var))
-    tf.summary.histogram('histogram', var)
+class StateRNN(Model):
 
-
-class StateRNN:
-
-    def __init__(self, latent_dim=4, action_dim=2, restore_from_dir=None):
+    def __init__(self, latent_dim=4, action_dim=2, restore_from_dir=None, sess=None, graph=None):
         print("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
-        self.graph = tf.Graph()
-        self.sess = tf.Session(graph=self.graph)
+
         self.latent_dim = latent_dim
         self.action_dim = action_dim
-        self.save_prefix = 'state_rnn'
-        date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        if restore_from_dir:
-            self.save_metagraph = False
-            self.identifier = os.path.basename(os.path.normpath(restore_from_dir))
-            self.save_file_path = restore_from_dir
-        else:
-            self.save_metagraph = True
-            self.identifier = '{}_{}dim_{}'.format(self.save_prefix, self.latent_dim, date_identifier)
-            self.save_file_path = './' + self.identifier
-
-        self.tensorboard_path = './tensorboard'
-
-        self._build_model(restore_from_dir)
-
-        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.identifier), self.graph)
-
         self.saved_state = None
 
-    def _restore_model(self, from_dir):
-        print("\n\nRestoring State RNN Model from {}".format(from_dir))
-        with self.graph.as_default():
-            # self.saver = tf.train.import_meta_graph(os.path.join(self.save_file_path, self.save_prefix + '.meta'))
-            self.saver.restore(self.sess, tf.train.latest_checkpoint(from_dir))
+        save_prefix = 'state_rnn_{}dim'.format(self.latent_dim)
+
+        super().__init__(save_prefix, restore_from_dir, sess, graph)
 
     def _build_model(self, restore_from_dir=None):
 
         with self.graph.as_default():
-            rnn_scope = 'State_RNN'
+            rnn_scope = 'STATE_RNN_MODEL'
             with tf.variable_scope(rnn_scope):
                 variance_scaling = tf.contrib.layers.variance_scaling_initializer()
                 xavier = tf.contrib.layers.xavier_initializer()
@@ -154,25 +122,29 @@ class StateRNN:
                     self.mse_loss = mse_over_batch
                     tf.summary.scalar('mse_loss', self.mse_loss)
 
-            self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)
-            self.global_step = tf.Variable(0, name='global_step', trainable=False)
-            self.train_op = self.optimizer.minimize(self.mse_loss, global_step=self.global_step)
-            # self.check_op = tf.add_check_numerics_ops()
-            # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
-            self.tf_summaries_merged = tf.summary.merge_all()
+            rnn_ops_scope = 'STATE_RNN_OPS'
+            with tf.variable_scope(rnn_ops_scope):
 
-            save_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=rnn_scope)
-            save_var_list.append(self.global_step)
+                self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)
+                self.local_step = tf.Variable(0, name='local_step', trainable=False)
+                self.train_op = self.optimizer.minimize(self.mse_loss, global_step=self.local_step)
+                # self.check_op = tf.add_check_numerics_ops()
+                # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
+                self.tf_summaries_merged = tf.summary.merge_all()
 
-            self.saver = tf.train.Saver(var_list=save_var_list,
-                                        max_to_keep=5,
-                                        keep_checkpoint_every_n_hours=1)
+                var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=rnn_scope)
+                var_list += tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=rnn_ops_scope)
 
-            self.init = tf.global_variables_initializer()
-        #
+                self.saver = tf.train.Saver(var_list=var_list,
+                                            max_to_keep=5,
+                                            keep_checkpoint_every_n_hours=1)
+
+            self.init = tf.variables_initializer(var_list=var_list, name='state_rnn_initializer')
+
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
+            print("\nRunning State RNN local init\n")
             self.sess.run(self.init)
 
     def train_on_input_fn(self, input_fn, steps=None):
@@ -204,10 +176,10 @@ class StateRNN:
                     self.sequence_lengths: batch_lengths
                              }
 
-                _, loss, summaries, global_step = sess.run([self.train_op,
+                _, loss, summaries, step = sess.run([self.train_op,
                                                             self.mse_loss,
                                                             self.tf_summaries_merged,
-                                                            self.global_step],
+                                                            self.local_step],
                                                            feed_dict=feed_dict)
 
                 # for target in np.squeeze(targets)[0]:
@@ -216,7 +188,7 @@ class StateRNN:
                 # self.writer.add_summary(summaries, step)
 
                 if local_step % 20 == 0 or local_step == 1:
-                    print('Step %i, Loss: %f' % (global_step, loss))
+                    print('Step %i, Loss: %f' % (step, loss))
 
                 if local_step % 1000 == 0:
                     self.save_model()
@@ -243,27 +215,4 @@ class StateRNN:
         predictions, self.saved_state = self.sess.run([self.output, self.lstm_state_out], feed_dict=feed_dict)
 
         return predictions
-
-    def save_model(self):
-
-        if not os.path.exists(self.save_file_path):
-            os.makedirs(self.save_file_path, exist_ok=True)
-
-        save_path = self.saver.save(sess=self.sess,
-                                    save_path=os.path.join(self.save_file_path, self.save_prefix),
-                                    write_meta_graph=self.save_metagraph,
-                                    global_step=self.global_step)
-
-        self.save_metagraph = False
-
-        print("RNN Model saved in path: {}".format(save_path))
-
-    def __del__(self):
-        if self.writer:
-            self.writer.close()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.writer:
-            self.writer.close()
-
 

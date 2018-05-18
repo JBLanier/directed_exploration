@@ -131,7 +131,7 @@ def get_rnn_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=None):
 def train_state_rnn(rnn, train_data_dir):
     input_fn = get_rnn_tfrecord_input_fn(train_data_dir, batch_size=64, num_epochs=40)
 
-    rnn.train_on_input_fn(input_fn)
+    rnn.train_on_input_fn(input_fn, steps=1)
 
     rnn.save_model()
 
@@ -315,38 +315,39 @@ def debug_boxpushsimple_no_vae_from_input_fn(rnn, train_data_dir):
 
 
 def main(args):
-    state_rnn = StateRNN(restore_from_dir=args.load_rnn_weights, latent_dim=1)
+    with tf.Session().as_default():
+        state_rnn = StateRNN(restore_from_dir=args.load_rnn_weights, latent_dim=1)
 
-    if args.train_rnn:
-        if args.train_data_dir:
-            train_state_rnn(state_rnn, args.train_data_dir)
-        else:
-            print("Must specify --train-data-dir")
-            exit(1)
+        if args.train_rnn:
+            if args.train_data_dir:
+                train_state_rnn(state_rnn, args.train_data_dir)
+            else:
+                print("Must specify --train-data-dir")
+                exit(1)
 
-    if args.debug_play:
-        if args.load_vae_weights and args.load_rnn_weights and not args.simple_encoding:
-            vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=state_rnn.latent_dim)
-            debug_play(state_rnn, vae)
-        elif args.load_rnn_weights and args.simple_encoding:
-            debug_play_box_simple_no_vae(state_rnn)
-        else:
-            print("Must specify \n--load-vae-weights=<vae weights dir> and\n --load-rnn-weights=<rnn weights dir>")
-            exit(1)
+        if args.debug_play:
+            if args.load_vae_weights and args.load_rnn_weights and not args.simple_encoding:
+                vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=state_rnn.latent_dim)
+                debug_play(state_rnn, vae)
+            elif args.load_rnn_weights and args.simple_encoding:
+                debug_play_box_simple_no_vae(state_rnn)
+            else:
+                print("Must specify \n--load-vae-weights=<vae weights dir> and\n --load-rnn-weights=<rnn weights dir>")
+                exit(1)
 
-    if args.debug_from_rollouts:
-        if args.load_vae_weights and args.load_rnn_weights and args.train_data_dir:
-            vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=state_rnn.latent_dim)
-            debug_from_input_fn(state_rnn, vae, args.train_data_dir)
+        if args.debug_from_rollouts:
+            if args.load_vae_weights and args.load_rnn_weights and args.train_data_dir:
+                vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=state_rnn.latent_dim)
+                debug_from_input_fn(state_rnn, vae, args.train_data_dir)
 
-        elif args.simple_encoding and args.load_rnn_weights and args.train_data_dir:
-            debug_boxpushsimple_no_vae_from_input_fn(state_rnn, args.train_data_dir)
+            elif args.simple_encoding and args.load_rnn_weights and args.train_data_dir:
+                debug_boxpushsimple_no_vae_from_input_fn(state_rnn, args.train_data_dir)
 
-        else:
-            print("Must specify \n--load-vae-weights=<vae weights dir> and\n"
-                  " --load-rnn-weights=<rnn weights dir> and\n"
-                  " --train-data-dir=<rollout data dir>")
-            exit(1)
+            else:
+                print("Must specify \n--load-vae-weights=<vae weights dir> and\n"
+                      " --load-rnn-weights=<rnn weights dir> and\n"
+                      " --train-data-dir=<rollout data dir>")
+                exit(1)
 
 
 if __name__ == '__main__':

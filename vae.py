@@ -1,59 +1,26 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 import tensorflow as tf
 import os
+from model import Model
 import datetime
 from tensorflow.python import debug as tf_debug
 
 
-def variable_summaries(var):
-  """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
-  with tf.name_scope('summaries'):
-    mean = tf.reduce_mean(var)
-    tf.summary.scalar('mean', mean)
-    with tf.name_scope('stddev'):
-      stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-    tf.summary.scalar('stddev', stddev)
-    tf.summary.scalar('max', tf.reduce_max(var))
-    tf.summary.scalar('min', tf.reduce_min(var))
-    tf.summary.histogram('histogram', var)
+class VAE(Model):
 
-class VAE:
-
-    def __init__(self, latent_dim=128, restore_from_dir=None):
-        print("VAE latent dim {}".format(latent_dim))
-        self.graph = tf.Graph()
-        self.sess = tf.Session(graph=self.graph)
+    def __init__(self, latent_dim=128, restore_from_dir=None, sess=None, graph=None):
         self.latent_dim = latent_dim
-        self.save_prefix = 'vae'
-        date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        if restore_from_dir:
-            self.save_metagraph = False
-            self.identifier = os.path.basename(os.path.normpath(restore_from_dir))
-            self.save_file_path = restore_from_dir
-        else:
-            self.save_metagraph = True
-            self.identifier = '{}_{}dim_{}'.format(self.save_prefix, self.latent_dim, date_identifier)
-            self.save_file_path = './' + self.identifier
+        save_prefix = "VAE_{}dim".format(self.latent_dim)
+        print("VAE latent dim {}".format(latent_dim))
 
-        self.tensorboard_path = './tensorboard'
-
-        self._build_model(restore_from_dir)
-
-        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.identifier), self.graph)
-
-    def _restore_model(self, from_dir):
-        print("\n\nRestoring Model from {}".format(from_dir))
-        with self.graph.as_default():
-            # self.saver = tf.train.import_meta_graph(os.path.join(self.save_file_path, self.save_prefix + '.meta'))
-            self.saver.restore(self.sess, tf.train.latest_checkpoint(from_dir))
+        super().__init__(save_prefix, restore_from_dir, sess, graph)
 
     def _build_model(self, restore_from_dir=None):
 
         with self.graph.as_default():
-            vae_scope = 'VAE'
+            vae_scope = 'VAE_MODEL'
             with tf.variable_scope(vae_scope):
                 variance_scaling = tf.contrib.layers.variance_scaling_initializer()
                 xavier = tf.contrib.layers.xavier_initializer()
@@ -145,25 +112,29 @@ class VAE:
                     self.loss = self.kl_div_loss * 10 + self.reconstruction_loss / 100
                     tf.summary.scalar('total_loss', self.loss)
 
-            self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)
-            self.global_step = tf.Variable(0, name='global_step', trainable=False)
-            self.train_op = self.optimizer.minimize(self.loss, global_step=self.global_step)
-            # self.check_op = tf.add_check_numerics_ops()
-            # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
-            # Initialize the variables (i.e. assign their default value)
-            self.tf_summaries_merged = tf.summary.merge_all()
+            vae_ops_scope = 'VAE_OPS'
+            with tf.variable_scope(vae_ops_scope):
+                self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)
+                self.local_step = tf.Variable(0, name='local_step', trainable=False)
+                self.train_op = self.optimizer.minimize(self.loss, global_step=self.local_step)
+                # self.check_op = tf.add_check_numerics_ops()
+                # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
+                # Initialize the variables (i.e. assign their default value)
+                self.tf_summaries_merged = tf.summary.merge_all()
 
-            save_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)
-            save_var_list.append(self.global_step)
-            self.saver = tf.train.Saver(var_list=save_var_list,
-                                        max_to_keep=5,
-                                        keep_checkpoint_every_n_hours=1)
+                var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)
+                var_list += tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_ops_scope)
 
-            self.init = tf.global_variables_initializer()
+                self.saver = tf.train.Saver(var_list=var_list,
+                                            max_to_keep=5,
+                                            keep_checkpoint_every_n_hours=1)
+
+            self.init = tf.variables_initializer(var_list=var_list, name='vae_initializer')
 
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
+            print("\nrunning VAE local init\n")
             self.sess.run(self.init)
 
     def train_on_input_fn(self, input_fn, steps=None, save_every_n_steps=30000):
@@ -190,18 +161,18 @@ class VAE:
 
                 # Train
                 feed_dict = {self.x: batch_x}
-                _, l, kl, r, summaries, global_step = sess.run([self.train_op,
-                                                                self.loss,
-                                                                self.kl_div_loss,
-                                                                self.reconstruction_loss,
-                                                                self.tf_summaries_merged,
-                                                                self.global_step],
-                                                               feed_dict=feed_dict)
+                _, l, kl, r, summaries, step = sess.run([self.train_op,
+                                                         self.loss,
+                                                         self.kl_div_loss,
+                                                         self.reconstruction_loss,
+                                                         self.tf_summaries_merged,
+                                                         self.local_step],
+                                                        feed_dict=feed_dict)
 
                 self.writer.add_summary(summaries, local_step)
 
                 if local_step % 50 == 0 or local_step == 1:
-                    print('Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (global_step, l, kl, r))
+                    print('Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
 
                 if local_step % save_every_n_steps == 0:
                     self.save_model()
@@ -220,26 +191,3 @@ class VAE:
 
     def encode_decode_frames(self, float_frames):
         return self.sess.run(self.decoded_encoded, feed_dict={self.x: float_frames})
-
-    def save_model(self):
-        if not os.path.exists(self.save_file_path):
-            os.makedirs(self.save_file_path, exist_ok=True)
-
-        save_path = self.saver.save(sess=self.sess,
-                                    save_path=os.path.join(self.save_file_path, self.save_prefix),
-                                    write_meta_graph=self.save_metagraph,
-                                    global_step=self.global_step)
-
-        self.save_metagraph = False
-
-        print("VAE Model saved in path: {}".format(save_path))
-
-    def __del__(self):
-        if self.writer:
-            self.writer.close()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.writer:
-            self.writer.close()
-
-

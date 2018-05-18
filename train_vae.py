@@ -107,24 +107,9 @@ def train_vae(vae, train_data_dir):
 
     input_fn = get_vae_tfrecord_input_fn(train_data_dir, batch_size=256, num_epochs=5)
 
-    vae.train_on_input_fn(input_fn)
+    vae.train_on_input_fn(input_fn, steps=None)
 
     vae.save_model()
-
-    # checkpoint_callback = ModelCheckpoint(filepath="weights8/weights.{epoch:02d}-{loss:.2f}.hdf5",
-    #                                       monitor='loss',
-    #                                       save_weights_only=True,
-    #                                       period=1)
-    #
-    # tensorboard_callback = TensorBoard(log_dir='./graph',
-    #                                    histogram_freq=0,
-    #                                    write_graph=True,
-    #                                    write_images=True)
-    #
-    #
-    # vae.vae.fit_generator(generator=rollout_gen,
-    #                       epochs=40,
-    #                       callbacks=[checkpoint_callback, tensorboard_callback])
 
 
 def debug_play(vae, env_name):
@@ -216,26 +201,27 @@ def debug_latent_space(vae, env_name):
 
 
 def main(args):
-    print("RESTORE FROM DIR: {}".format(args.load_vae_weights))
-    vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=1)
-    if args.train_vae:
-        if args.train_data_dir:
-            train_vae(vae, args.train_data_dir)
-        else:
-            print("Must specify --train-data-dir")
-            exit(1)
-    if args.debug_play:
-        if args.load_vae_weights:
-            debug_play(vae, args.env)
-        else:
-            print("Must specify --load-vae-weights")
-            exit(1)
-    if args.debug_latent_space:
-        if args.load_vae_weights:
-            debug_latent_space(vae, args.env)
-        else:
-            print("Must specify --load-vae-weights")
-            exit(1)
+    with tf.Session().as_default():
+        print("RESTORE FROM DIR: {}".format(args.load_vae_weights))
+        vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=1)
+        if args.train_vae:
+            if args.train_data_dir:
+                train_vae(vae, args.train_data_dir)
+            else:
+                print("Must specify --train-data-dir")
+                exit(1)
+        if args.debug_play:
+            if args.load_vae_weights:
+                debug_play(vae, args.env)
+            else:
+                print("Must specify --load-vae-weights")
+                exit(1)
+        if args.debug_latent_space:
+            if args.load_vae_weights:
+                debug_latent_space(vae, args.env)
+            else:
+                print("Must specify --load-vae-weights")
+                exit(1)
 
 
 if __name__ == '__main__':
