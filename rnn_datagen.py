@@ -59,76 +59,6 @@ def debug_imshow_image_with_action(frame, action, wait_time=30, window_label='fr
     cv2.imshow(window_label, frame[:, :, ::-1])
 
 
-def write_new_random_boxpush_simple_rollout_rnn_tf_record(episode_index, rnn_data_write_dir,
-                                                          max_episode_length, max_sequence_length):
-    """
-    For debugging RNN, boxpushsimple frames are given a -perfect- 1d encoding
-    by cheating and asking the exact location of the player.
-    """
-
-    episode_over = False
-
-    write_file_name = os.path.join(rnn_data_write_dir, 'rnn_{}.tfrecords'.format(episode_index))
-    tf_record_writer = tf.python_io.TFRecordWriter(write_file_name)
-
-    sequence_lengths = []
-    total_frames = 0
-
-    env = gym.make('boxpushsimple-v0')
-    env.reset()
-
-    actions = [[0, 0], [1, 0], [1, -1]]
-    action_index = 0
-
-    while not episode_over:
-
-        # If a generated sequence is less than max_sequence_length, the rest of it will be zeros.
-        encoded_sequence = np.zeros(shape=(max_sequence_length, 1), dtype=np.float32)
-        action_sequence = np.zeros(shape=(max_sequence_length, ACTION_LENGTH), dtype=np.float32)
-
-        sequence_length = 0
-        for sequence_index in range(max_sequence_length):
-
-            if random.random() < 1 / max_episode_length or total_frames > max_episode_length:
-                episode_over = True
-                break
-
-            if random.random() < 0.05:
-                action_index = random.randint(0, len(actions) - 1)
-
-            action = np.asarray(actions[action_index])
-            location = env.debug_get_player_location()
-            if location == 0:
-                location += 0.000001
-            encoded_sequence[sequence_index] = location
-            action_sequence[sequence_index] = action
-
-            env.step(action)
-
-            sequence_length += 1
-            total_frames += 1
-
-        # Must have at least two frames to be suitable for RNN training
-        if sequence_length >= 2:
-            encoded_sequence = np.concatenate((encoded_sequence, action_sequence), axis=1)
-
-            sequence_lengths.append(sequence_length)
-
-            sequence_bytes = pickle.dumps(encoded_sequence)
-
-            # save sequence, its length, and the size of the frame encoding
-            example = tf.train.Example(features=tf.train.Features(feature={
-                'sequence_bytes': _bytes_feature(sequence_bytes),
-                'sequence_length': _int64_feature(sequence_length),
-                'latent_dims': _int64_feature(1)
-            }))
-            tf_record_writer.write(example.SerializeToString())
-
-    tf_record_writer.close()
-    print("Wrote {} with sequences {}".format(write_file_name, sequence_lengths))
-    return sequence_lengths
-
-
 def write_vae_episode_to_rnn_tf_record(vae_read_file_name, vae, rnn_data_write_dir, max_sequence_length):
     record_iterator = tf.python_io.tf_record_iterator(vae_read_file_name)
     all_of_file_read = False
@@ -234,6 +164,76 @@ def convert_vae_record_to_rnn_records(vae_model_dir, vae_data_read_dir, rnn_data
     print("Done, wrote {} episodes with {} sequences ({} frames).".format(len(vae_tf_records_files),
                                                                           number_of_sequences_written,
                                                                           total_frames_written))
+
+
+def write_new_random_boxpush_simple_rollout_rnn_tf_record(episode_index, rnn_data_write_dir,
+                                                          max_episode_length, max_sequence_length):
+    """
+    For debugging RNN, boxpushsimple frames are given a -perfect- 1d encoding
+    by cheating and asking the exact location of the player.
+    """
+
+    episode_over = False
+
+    write_file_name = os.path.join(rnn_data_write_dir, 'rnn_{}.tfrecords'.format(episode_index))
+    tf_record_writer = tf.python_io.TFRecordWriter(write_file_name)
+
+    sequence_lengths = []
+    total_frames = 0
+
+    env = gym.make('boxpushsimple-v0')
+    env.reset()
+
+    actions = [[0, 0], [1, 0], [1, -1]]
+    action_index = 0
+
+    while not episode_over:
+
+        # If a generated sequence is less than max_sequence_length, the rest of it will be zeros.
+        encoded_sequence = np.zeros(shape=(max_sequence_length, 1), dtype=np.float32)
+        action_sequence = np.zeros(shape=(max_sequence_length, ACTION_LENGTH), dtype=np.float32)
+
+        sequence_length = 0
+        for sequence_index in range(max_sequence_length):
+
+            if random.random() < 1 / max_episode_length or total_frames > max_episode_length:
+                episode_over = True
+                break
+
+            if random.random() < 0.05:
+                action_index = random.randint(0, len(actions) - 1)
+
+            action = np.asarray(actions[action_index])
+            location = env.debug_get_player_location()
+            if location == 0:
+                location += 0.000001
+            encoded_sequence[sequence_index] = location
+            action_sequence[sequence_index] = action
+
+            env.step(action)
+
+            sequence_length += 1
+            total_frames += 1
+
+        # Must have at least two frames to be suitable for RNN training
+        if sequence_length >= 2:
+            encoded_sequence = np.concatenate((encoded_sequence, action_sequence), axis=1)
+
+            sequence_lengths.append(sequence_length)
+
+            sequence_bytes = pickle.dumps(encoded_sequence)
+
+            # save sequence, its length, and the size of the frame encoding
+            example = tf.train.Example(features=tf.train.Features(feature={
+                'sequence_bytes': _bytes_feature(sequence_bytes),
+                'sequence_length': _int64_feature(sequence_length),
+                'latent_dims': _int64_feature(1)
+            }))
+            tf_record_writer.write(example.SerializeToString())
+
+    tf_record_writer.close()
+    print("Wrote {} with sequences {}".format(write_file_name, sequence_lengths))
+    return sequence_lengths
 
 
 def generate_perfect_boxpushsimple_rnn_records(rnn_data_write_dir, max_episode_length,

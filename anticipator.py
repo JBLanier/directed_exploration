@@ -6,53 +6,20 @@ import os
 import datetime
 import cv2
 from vae import VAE
+from model import Model
 from tensorflow.python import debug as tf_debug
 
 
-def variable_summaries(var):
-    """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
-    with tf.name_scope('summaries'):
-        mean = tf.reduce_mean(var)
-        tf.summary.scalar('mean', mean)
-        with tf.name_scope('stddev'):
-            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-        tf.summary.scalar('stddev', stddev)
-        tf.summary.scalar('max', tf.reduce_max(var))
-        tf.summary.scalar('min', tf.reduce_min(var))
-        tf.summary.histogram('histogram', var)
+class AnticipatorRNN(Model):
 
-
-class AnticipatorRNN:
-
-    def __init__(self, action_dim=2, restore_from_dir=None):
+    def __init__(self, action_dim=2, restore_from_dir=None, sess=None, graph=None):
         print("Anticipator, action dim {}".format(action_dim))
-        self.graph = tf.Graph()
-        self.sess = tf.Session(graph=self.graph)
+
         self.action_dim = action_dim
-        self.save_prefix = 'anticipator_rnn'
-        date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        if restore_from_dir:
-            self.save_metagraph = False
-            self.identifier = os.path.basename(os.path.normpath(restore_from_dir))
-            self.save_file_path = restore_from_dir
-        else:
-            self.save_metagraph = True
-            self.identifier = '{}_{}'.format(self.save_prefix, date_identifier)
-            self.save_file_path = './' + self.identifier
-
-        self.tensorboard_path = './tensorboard'
-
-        self._build_model(restore_from_dir)
-
-        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.identifier), self.graph)
-
         self.saved_state = None
+        save_prefix = 'anticipator_rnn'
 
-    def _restore_model(self, from_dir):
-        print("\n\nRestoring State RNN Model from {}".format(from_dir))
-        with self.graph.as_default():
-            # self.saver = tf.train.import_meta_graph(os.path.join(self.save_file_path, self.save_prefix + '.meta'))
-            self.saver.restore(self.sess, tf.train.latest_checkpoint(from_dir))
+        super().__init__(save_prefix, restore_from_dir, sess=sess, graph=graph)
 
     def _build_model(self, restore_from_dir=None):
 
@@ -186,26 +153,32 @@ class AnticipatorRNN:
                     self.mse_loss = mse_over_batch
                     tf.summary.scalar('mse_loss', self.mse_loss)
 
-            self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)
-            self.global_step = tf.Variable(0, name='global_step', trainable=False)
-            self.train_op = self.optimizer.minimize(self.mse_loss, global_step=self.global_step)
-            # self.check_op = tf.add_check_numerics_ops()
-            # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
-            self.tf_summaries_merged = tf.summary.merge_all()
+            rnn_ops_scope = 'ANTICIPATOR_OPS'
+            with tf.variable_scope(rnn_ops_scope):
 
-            save_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=rnn_scope)
-            save_var_list.append(self.global_step)
+                self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)
+                self.local_step = tf.Variable(0, name='local_step', trainable=False)
+                self.train_op = self.optimizer.minimize(self.mse_loss, global_step=self.local_step)
+                # self.check_op = tf.add_check_numerics_ops()
+                # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
+                self.tf_summaries_merged = tf.summary.merge_all(scope=rnn_scope)
 
-            self.saver = tf.train.Saver(var_list=save_var_list,
-                                        max_to_keep=5,
-                                        keep_checkpoint_every_n_hours=1)
+                var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=rnn_scope)
+                var_list += tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=rnn_ops_scope)
 
-            self.init = tf.global_variables_initializer()
-        #
+                self.saver = tf.train.Saver(var_list=var_list,
+                                            max_to_keep=5,
+                                            keep_checkpoint_every_n_hours=1)
+
+            self.init = tf.variables_initializer(var_list=var_list, name='anticipator_initializer')
+
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
+            print("\nrunning Anticipator local init\n")
             self.sess.run(self.init)
+
+        self.writer.add_graph(self.graph)
 
     def reset_state(self):
         self.saved_state = None
@@ -224,25 +197,3 @@ class AnticipatorRNN:
 
         predictions, self.saved_state = self.sess.run([self.output, self.lstm_state_out], feed_dict=feed_dict)
         return np.squeeze(predictions)
-
-    def save_model(self):
-
-        if not os.path.exists(self.save_file_path):
-            os.makedirs(self.save_file_path, exist_ok=True)
-
-        save_path = self.saver.save(sess=self.sess,
-                                    save_path=os.path.join(self.save_file_path, self.save_prefix),
-                                    write_meta_graph=self.save_metagraph,
-                                    global_step=self.global_step)
-
-        self.save_metagraph = False
-
-        print("Anticipator Model saved in path: {}".format(save_path))
-
-    def __del__(self):
-        if self.writer:
-            self.writer.close()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.writer:
-            self.writer.close()

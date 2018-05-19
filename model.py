@@ -40,7 +40,7 @@ class Model(ABC):
             self.save_file_path = './' + self.identifier
 
         self.tensorboard_path = './tensorboard'
-        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.identifier), self.graph)
+        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.identifier))
         self._build_model(restore_from_dir)
 
     @abstractmethod

@@ -130,7 +130,7 @@ class StateRNN(Model):
                 self.train_op = self.optimizer.minimize(self.mse_loss, global_step=self.local_step)
                 # self.check_op = tf.add_check_numerics_ops()
                 # print("\n\nCollection: {}".format(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=vae_scope)))
-                self.tf_summaries_merged = tf.summary.merge_all()
+                self.tf_summaries_merged = tf.summary.merge_all(scope=rnn_scope)
 
                 var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=rnn_scope)
                 var_list += tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=rnn_ops_scope)
@@ -146,6 +146,8 @@ class StateRNN(Model):
         else:
             print("\nRunning State RNN local init\n")
             self.sess.run(self.init)
+
+        self.writer.add_graph(self.graph)
 
     def train_on_input_fn(self, input_fn, steps=None):
 
