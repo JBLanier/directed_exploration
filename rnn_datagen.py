@@ -147,16 +147,18 @@ def convert_vae_record_to_rnn_records(vae_model_dir, vae_data_read_dir, rnn_data
 
     vae_tf_records_files = get_numbered_tfrecord_file_names_from_directory(dir=vae_data_read_dir, prefix='vae')
 
-    vae = VAE(restore_from_dir=vae_model_dir, latent_dim=1)
+    sess = tf.Session()
+    with sess.as_default():
+        vae = VAE(restore_from_dir=vae_model_dir, latent_dim=1)
 
-    with multiprocessing.pool.ThreadPool(processes=args.num_workers) as pool:
-        episode_sequence_lengths = pool.starmap(write_vae_episode_to_rnn_tf_record,
-                                                zip(vae_tf_records_files,
-                                                    itertools.repeat(vae),
-                                                    itertools.repeat(rnn_data_write_dir),
-                                                    itertools.repeat(max_sequence_length)
+        with multiprocessing.pool.ThreadPool(processes=args.num_workers) as pool:
+            episode_sequence_lengths = pool.starmap(write_vae_episode_to_rnn_tf_record,
+                                                    zip(vae_tf_records_files,
+                                                        itertools.repeat(vae),
+                                                        itertools.repeat(rnn_data_write_dir),
+                                                        itertools.repeat(max_sequence_length)
+                                                        )
                                                     )
-                                                )
 
     number_of_sequences_written = reduce(lambda acc, episode: acc + len(episode), episode_sequence_lengths, 0)
     total_frames_written = reduce(lambda acc, episode: acc + sum(episode), episode_sequence_lengths, 0)

@@ -171,26 +171,26 @@ def get_state_rnn_deque_input_fn(state_rnn_episodes_deque, batch_size, max_episo
     def episode_pop_generator():
         while True:
             try:
-                yield state_rnn_episodes_deque.pop()
+                e = state_rnn_episodes_deque.pop()
+                print("popped episode shapes {}".format([l.shape for l in e]))
+                yield e
             except IndexError:
                 break
 
     def format_sequence_fn(code_sequence, action_sequence, sequence_length, frame_sequence):
-        assert len(code_sequence) == len(action_sequence) == frame_sequence == max_sequence_length
+        assert len(code_sequence) == len(action_sequence) == len(frame_sequence) == max_sequence_length
         assert sequence_length <= len(code_sequence)
 
         # input to rnn is sequence[n] (latent dim + actions], target is sequence[n+1] (latent dim only)
         input_sequence = np.concatenate((np.copy(code_sequence), action_sequence), axis=1)[:-1]
-        frame_input_sequence = frame_sequence[:-1]
 
         # remove last entry from input as it should only belong in the target sequence
         if sequence_length < len(code_sequence):
             input_sequence[sequence_length - 1] = 0
-            frame_input_sequence[sequence_length - 1] = 0
 
         target_sequence = code_sequence[1:]
 
-        return input_sequence, target_sequence, sequence_length - 1, frame_input_sequence
+        return input_sequence, target_sequence, np.int32(sequence_length - 1), frame_sequence
 
     def slice_shuffle_and_format_fn(x1, x2, x3, x4):
         episode_length = tf.cast(tf.shape(x1)[0], tf.int64)
@@ -201,17 +201,17 @@ def get_state_rnn_deque_input_fn(state_rnn_episodes_deque, batch_size, max_episo
         return dataset.map(map_func=lambda t1, t2, t3, t4: tuple(tf.py_func(func=format_sequence_fn,
                                                                             inp=[t1, t2, t3, t4],
                                                                             Tout=[tf.float32, tf.float32,
-                                                                                  tf.float32, tf.float32],
+                                                                                  tf.int32, tf.float32],
                                                                             stateful=False)),
                            num_parallel_calls=multiprocessing.cpu_count())
 
     def input_fn():
         dataset = tf.data.Dataset.from_generator(generator=episode_pop_generator,
-                                                 output_types=(tf.float32, tf.float32, tf.float32, tf.float32),
-                                                 output_shapes=(tf.TensorShape([None, max_episode_length, latent_dim]),
-                                                                tf.TensorShape([None, max_episode_length, ACTION_DIM]),
+                                                 output_types=(tf.float32, tf.float32, tf.int32, tf.float32),
+                                                 output_shapes=(tf.TensorShape([None, max_sequence_length, latent_dim]),
+                                                                tf.TensorShape([None, max_sequence_length, ACTION_DIM]),
                                                                 tf.TensorShape([None]),
-                                                                tf.TensorShape([None, max_episode_length, 64, 64, 3])))
+                                                                tf.TensorShape([None, max_sequence_length, 64, 64, 3])))
 
         cycle_length = 30
         dataset = dataset.interleave(map_func=slice_shuffle_and_format_fn,
@@ -233,10 +233,16 @@ def divide_episode_into_sequences(episode, max_sequence_length):
     sequences = [episode[i * max_sequence_length:(i + 1) * max_sequence_length]
                  for i in range((len(episode) + max_sequence_length - 1) // max_sequence_length)]
 
-    sequence_lengths = [len(sequence) for sequence in sequences]
+    sequence_lengths = [np.int32(len(sequence)) for sequence in sequences]
+
+    # Can't do anything useful with a sequence of length 1
+    if len(sequences[-1]) < 2:
+        sequences = sequences[:-1]
+        sequence_lengths = sequence_lengths[:-1]
+        assert len(sequences[-1]) == max_sequence_length
 
     # Pad last sequence with zeros to ensure all sequences are in the same shape ndarray
-    if len(sequences[-1]) < max_sequence_length:
+    elif len(sequences[-1]) < max_sequence_length:
         zeros = np.zeros(shape=(max_sequence_length - sequences[-1].shape[0], *sequences[-1].shape[1:]))
         sequences[-1] = np.concatenate((sequences[-1], zeros), axis=0)
 
@@ -264,11 +270,13 @@ def convert_vae_deque_to_state_rnn_deque(vae, vae_deque, state_rnn_episodes_dequ
             sequence_length = sequence_lengths[sequence_index]
             assert sequence_length == action_seq_len[sequence_index]
             assert len(frame_sequence) == len(action_sequence) == max_sequence_length
-            if sequence_length > 2:
+            if sequence_length >= 2:
                 code_sequence = vae.encode_frames(frame_sequence)
                 code_sequence[sequence_length:] = 0
 
                 episode_code_sequences.append(code_sequence)
+
+        assert len(episode_code_sequences) == len(episode_actions_sequences) == len(episode_frames_sequences)
 
         if len(episode_code_sequences) > 0:
             state_rnn_episodes_deque.append((np.stack(episode_code_sequences),
@@ -292,11 +300,11 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim):
     sess = tf.Session(config=config)
     with sess.as_default():
         anticipator = AnticipatorRNN()
-        vae = VAE(latent_dim=latent_dim)
-        state_rnn = StateRNN(latent_dim=latent_dim)
+        vae = VAE(latent_dim=latent_dim, restore_from_dir='VAE_1dim_20180518223003')
+        state_rnn = StateRNN(latent_dim=latent_dim, restore_from_dir='state_rnn_1dim_20180519221250')
         num_episodes_per_environment = 1
-        max_episode_length = 400
-        max_sequence_length = 200
+        max_episode_length = 8
+        max_sequence_length = 8
         vae_episodes_deque = deque()
         state_rnn_episodes_deque = deque()
 
@@ -305,7 +313,7 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim):
         vae_input_fn_iter, vae_input_fn_init_op = vae_input_fn()
 
         state_rnn_input_fn = get_state_rnn_deque_input_fn(state_rnn_episodes_deque=state_rnn_episodes_deque,
-                                                          batch_size=64, max_episode_length=max_episode_length,
+                                                          batch_size=1, max_episode_length=max_episode_length,
                                                           latent_dim=latent_dim,
                                                           max_sequence_length=max_sequence_length)
         state_rnn_input_fn_iter, state_rnn_input_fn_init_op = state_rnn_input_fn()
@@ -341,42 +349,47 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim):
             sess.run(state_rnn_input_fn_init_op)
             # state_rnn.train_on_iterator(state_rnn_input_fn_iter)
 
-            while True:
-
-                try:
-                    batch_inputs, batch_targets, batch_lengths, batch_frames = sess.run(state_rnn_input_fn_iter)
-                except tf.errors.OutOfRangeError:
-                    print("Input_fn ended")
-                    break
-
-                prediction = batch_inputs[0, 0, :latent_dim]
-                state = None
-
-                print("used length: {}".format(batch_lengths))
-                print("batch inputs, shape {} : \n{}".format(batch_inputs.shape, batch_inputs))
-                print("batch targets, shape {} : \n{}".format(batch_targets.shape, batch_targets))
-                for i in range(batch_lengths[0]):
-                    frame = np.squeeze(vae.decode_frames(batch_inputs[:, i, :state_rnn.latent_dim]))
-                    target_frame = np.squeeze(vae.decode_frames(batch_targets[:, i, :state_rnn.latent_dim]))
-                    action = batch_inputs[0, i, state_rnn.latent_dim:]
-                    feed_dict = {
-                        state_rnn.sequence_inputs: np.expand_dims(
-                            np.expand_dims(np.concatenate((np.squeeze(prediction), action), axis=0), 0), 0),
-                        state_rnn.sequence_lengths: np.asarray([1])
-                    }
-
-                    if state:
-                        feed_dict[state_rnn.lstm_state_in] = state
-
-                    decoded_input = np.squeeze(vae.decode_frames(np.expand_dims(np.squeeze(prediction), 0)))
-                    prediction, state = sess.run([state_rnn.output, state_rnn.lstm_state_out], feed_dict=feed_dict)
-                    decoded_prediction = np.squeeze(vae.decode_frames(prediction[:, 0, ...]))
-
-                    debug_imshow_image_with_action(frame, action, window_label='actual frame')
-                    debug_imshow_image_with_action(target_frame, action, window_label='actual next frame')
-                    debug_imshow_image_with_action(decoded_input, action, window_label='prediction input')
-                    debug_imshow_image_with_action(decoded_prediction, action, window_label='prediction output')
-                    cv2.waitKey(800)
+            # Debug visualize state rnn input fn with batch size 1
+            # while True:
+            #
+            #     try:
+            #         batch_inputs, batch_targets, batch_lengths, batch_frames = sess.run(state_rnn_input_fn_iter)
+            #     except tf.errors.OutOfRangeError:
+            #         print("Input_fn ended")
+            #         break
+            #
+            #     prediction = batch_inputs[0, 0, :latent_dim]
+            #     state = None
+            #
+            #     print("batch lengths: {}".format(batch_lengths))
+            #     # print("batch inputs shape {} : \n{}".format(batch_inputs.shape, batch_inputs))
+            #     # print("batch targets shape {} : \n{}".format(batch_targets.shape, batch_targets))
+            #     for i in range(batch_lengths[0]):
+            #         raw_frame = np.squeeze(batch_frames[:, i, ...])
+            #         raw_target_frame = np.squeeze(batch_frames[:, i+1, ...])
+            #         vae_frame = np.squeeze(vae.decode_frames(batch_inputs[:, i, :state_rnn.latent_dim]))
+            #         vae_target_frame = np.squeeze(vae.decode_frames(batch_targets[:, i, :]))
+            #         action = batch_inputs[0, i, state_rnn.latent_dim:]
+            #         feed_dict = {
+            #             state_rnn.sequence_inputs: np.expand_dims(
+            #                 np.expand_dims(np.concatenate((np.reshape(prediction, [latent_dim]), action), axis=0), 0), 0),
+            #             state_rnn.sequence_lengths: np.asarray([1])
+            #         }
+            #
+            #         if state:
+            #             feed_dict[state_rnn.lstm_state_in] = state
+            #
+            #         decoded_input = np.squeeze(vae.decode_frames(np.expand_dims(np.reshape(prediction, [latent_dim]), 0)))
+            #         prediction, state = sess.run([state_rnn.output, state_rnn.lstm_state_out], feed_dict=feed_dict)
+            #         decoded_prediction = np.squeeze(vae.decode_frames(prediction[:, 0, ...]))
+            #
+            #         cv2.imshow('raw actual frame', raw_frame[:,:,::-1])
+            #         cv2.imshow('raw actual next frame ', raw_target_frame[:,:,::-1])
+            #         debug_imshow_image_with_action('decoded actual frame', vae_frame, action)
+            #         debug_imshow_image_with_action('decoded actual next frame ', vae_target_frame, action)
+            #         debug_imshow_image_with_action('prediction input', decoded_input, action)
+            #         debug_imshow_image_with_action('prediction output', decoded_prediction, action)
+            #         cv2.waitKey(800)
 
         # iteration = 0
         # while True:

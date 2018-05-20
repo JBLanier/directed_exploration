@@ -131,7 +131,7 @@ def get_rnn_tfrecord_input_fn(train_data_dir, batch_size=32, num_epochs=None):
 def train_state_rnn(rnn, train_data_dir):
     input_fn = get_rnn_tfrecord_input_fn(train_data_dir, batch_size=64, num_epochs=40)
 
-    rnn.train_on_input_fn(input_fn, steps=1)
+    rnn.train_on_input_fn(input_fn)
 
     rnn.save_model()
 
