@@ -57,7 +57,7 @@ class AnticipatorRNN(Model):
 
 
                 self.computed_lengths = length(self.frame_inputs)
-                self.sequence_lengths = tf.placeholder(tf.int32, shape=[None])
+                self.sequence_lengths = tf.placeholder(tf.int32, shape=[None], name='sequence_lengths')
 
                 # self.computed_lengths = tf.Print(self.computed_lengths,[self.computed_lengths, tf.shape(self.computed_lengths)], "Computed Lengths: ")
                 # self.sequence_lengths = tf.Print(self.sequence_lengths,[self.sequence_lengths, tf.shape(self.sequence_lengths)], "Passed Sequence Lengths: ")
@@ -147,7 +147,7 @@ class AnticipatorRNN(Model):
 
                     # Average Over actual Sequence Lengths
                     with tf.control_dependencies(
-                            [tf.assert_equal(tf.cast(tf.reduce_sum(mask, 1), dtype=tf.int32), self.sequence_lengths),
+                            [tf.assert_equal(tf.cast(tf.reduce_sum(mask, [1, 2]), dtype=tf.int32), self.sequence_lengths),
                              tf.assert_equal(self.computed_lengths, self.sequence_lengths),
                              tf.assert_equal(self.computed_lengths, length(self.loss_targets))
                              ]):
@@ -188,7 +188,7 @@ class AnticipatorRNN(Model):
     def reset_state(self):
         self.saved_state = None
 
-    def predict_on_frame_batch(self, frames, actions):
+    def predict_on_frame_batch_retain_state(self, frames, actions):
         assert frames.shape[1:] == (64, 64, 3)
         assert actions.shape[1] == self.action_dim
         assert frames.shape[0] == actions.shape[0]

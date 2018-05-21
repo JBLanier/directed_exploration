@@ -76,6 +76,7 @@ def generate_rollouts_on_anticipator_policy_into_deque(episode_deque, anticipato
     for _ in range(num_episodes_per_environment):
         start = time.time()
         obs = env.reset() / 255.0
+        anticipator.reset_state()
 
         episode_frames = [np.empty(shape=(max_episode_length, 64, 64, 3), dtype=np.float32) for _ in range(num_env)]
         episode_actions = [np.empty(shape=(max_episode_length, ACTION_DIM), dtype=np.float32) for _ in range(num_env)]
@@ -85,7 +86,7 @@ def generate_rollouts_on_anticipator_policy_into_deque(episode_deque, anticipato
         for episode_frame_index in range(max_episode_length):
 
             # Predict loss amounts (action scores) for each action/observation
-            action_scores = anticipator.predict_on_frame_batch(
+            action_scores = anticipator.predict_on_frame_batch_retain_state(
                 frames=np.repeat(obs, [len(available_actions)] * num_env, 0),
                 actions=np.asarray(available_actions * num_env))
             action_scores = np.reshape(action_scores, newshape=[num_env, len(available_actions)])
@@ -402,9 +403,9 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
         anticipator = AnticipatorRNN()
         vae = VAE(latent_dim=latent_dim, working_dir=os.path.join(root_save_dir, 'vae'))
         state_rnn = StateRNN(latent_dim=latent_dim, working_dir=os.path.join(root_save_dir, 'state_rnn'))
-        num_episodes_per_environment = 3
-        max_episode_length = 2000
-        max_sequence_length = 200
+        num_episodes_per_environment = 1
+        max_episode_length = 9
+        max_sequence_length = 3
         vae_episodes_deque = deque()
         state_rnn_episodes_deque = deque()
         anticipator_deque = deque()
@@ -557,5 +558,5 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
 
 
 if __name__ == '__main__':
-    # do_iterative_exploration('boxpushsimple-v0', num_env=60, num_iterations=10, latent_dim=1, working_dir=None)
-    do_iterative_exploration('boxpushsimple-v0', num_env=1, num_iterations=10, latent_dim=1, working_dir='itexplore_no_anticipator_training_boxpushsimple')
+    do_iterative_exploration('boxpushsimple-v0', num_env=48, num_iterations=10, latent_dim=1, working_dir=None)
+    # do_iterative_exploration('boxpushsimple-v0', num_env=1, num_iterations=10, latent_dim=1, working_dir='itexplore_no_anticipator_training_boxpushsimple')
