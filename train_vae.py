@@ -203,7 +203,7 @@ def debug_latent_space(vae, env_name):
 def main(args):
     with tf.Session().as_default():
         print("RESTORE FROM DIR: {}".format(args.load_vae_weights))
-        vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=1)
+        vae = VAE(working_dir=args.load_vae_weights, latent_dim=1)
         if args.train_vae:
             if args.train_data_dir:
                 train_vae(vae, args.train_data_dir)
@@ -211,11 +211,8 @@ def main(args):
                 print("Must specify --train-data-dir")
                 exit(1)
         if args.debug_play:
-            if args.load_vae_weights:
-                debug_play(vae, args.env)
-            else:
-                print("Must specify --load-vae-weights")
-                exit(1)
+            debug_play(vae, args.env)
+
         if args.debug_latent_space:
             if args.load_vae_weights:
                 debug_latent_space(vae, args.env)

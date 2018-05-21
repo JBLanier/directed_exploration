@@ -13,7 +13,7 @@ from tensorflow.python import debug as tf_debug
 
 class StateRNN(Model):
 
-    def __init__(self, latent_dim=4, action_dim=2, restore_from_dir=None, sess=None, graph=None):
+    def __init__(self, latent_dim=4, action_dim=2, working_dir=None, sess=None, graph=None):
         print("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
 
         self.latent_dim = latent_dim
@@ -22,7 +22,7 @@ class StateRNN(Model):
 
         save_prefix = 'state_rnn_{}dim'.format(self.latent_dim)
 
-        super().__init__(save_prefix, restore_from_dir, sess, graph)
+        super().__init__(save_prefix, working_dir, sess, graph)
 
     def _build_model(self, restore_from_dir=None):
 
@@ -201,10 +201,54 @@ class StateRNN(Model):
 
                 local_step += 1
 
+    def train_on_iterator(self, iterator, iterator_sess=None, steps=None, save_every_n_steps=None):
+
+        if not iterator_sess:
+            iterator_sess = self.sess
+
+        local_step = 1
+        while True:
+
+            try:
+                batch_inputs, batch_targets, batch_lengths, batch_frames =iterator_sess.run(iterator)
+            except tf.errors.OutOfRangeError:
+                print("Input_fn ended at step {}".format(local_step))
+                break
+
+            # Train
+            feed_dict = {
+                self.sequence_inputs: batch_inputs,
+                self.sequence_targets: batch_targets,
+                self.sequence_lengths: batch_lengths
+            }
+
+            _, loss, summaries, step = self.sess.run([self.train_op,
+                                                    self.mse_loss,
+                                                    self.tf_summaries_merged,
+                                                    self.local_step],
+                                                feed_dict=feed_dict)
+
+            # for target in np.squeeze(targets)[0]:
+            #     cv2.imshow("target",np.squeeze(vae.decode_frames(np.expand_dims(target,0)))[:,:,::-1])
+            #     cv2.waitKey(300)
+            # self.writer.add_summary(summaries, step)
+
+            if local_step % 20 == 0 or local_step == 1:
+                print('State RNN Step %i, Loss: %f' % (step, loss))
+
+            if save_every_n_steps and local_step % save_every_n_steps == 0:
+                self.save_model()
+
+            if steps and local_step >= steps:
+                print("Completed {} steps".format(steps))
+                break
+
+            local_step += 1
+
     def reset_state(self):
         self.saved_state = None
 
-    def predict_on_frames(self, z_codes, actions):
+    def predict_on_frames_retain_state(self, z_codes, actions):
         assert z_codes.shape[1] == self.latent_dim
         assert actions.shape[1] == self.action_dim
 
@@ -215,6 +259,18 @@ class StateRNN(Model):
             feed_dict[self.lstm_state_in] = self.saved_state
 
         predictions, self.saved_state = self.sess.run([self.output, self.lstm_state_out], feed_dict=feed_dict)
+
+        return predictions
+
+    def predict_on_sequences(self, z_sequences, action_sequences, sequence_lengths):
+        assert z_sequences.shape[2] == self.latent_dim
+        assert action_sequences.shape[2] == self.action_dim
+        assert z_sequences.shape[0:2] == action_sequences.shape[0:2]
+
+        feed_dict = {self.sequence_inputs: np.concatenate((z_sequences, action_sequences), axis=2),
+                     self.sequence_lengths: sequence_lengths}
+
+        predictions = np.squeeze(self.sess.run([self.output], feed_dict=feed_dict))
 
         return predictions
 

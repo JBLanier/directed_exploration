@@ -12,14 +12,14 @@ from tensorflow.python import debug as tf_debug
 
 class AnticipatorRNN(Model):
 
-    def __init__(self, action_dim=2, restore_from_dir=None, sess=None, graph=None):
+    def __init__(self, action_dim=2, working_dir=None, sess=None, graph=None):
         print("Anticipator, action dim {}".format(action_dim))
 
         self.action_dim = action_dim
         self.saved_state = None
         save_prefix = 'anticipator_rnn'
 
-        super().__init__(save_prefix, restore_from_dir, sess=sess, graph=graph)
+        super().__init__(save_prefix, working_dir, sess=sess, graph=graph)
 
     def _build_model(self, restore_from_dir=None):
 
@@ -46,10 +46,15 @@ class AnticipatorRNN(Model):
                         sequence_shape = tf.shape(sequence)
                         used = tf.sign(tf.reduce_max(tf.abs(tf.reshape(sequence,
                                                                        shape=[sequence_shape[0], sequence_shape[1],
-                                                                              tf.reduce_sum(sequence_shape[2:])],name='j') ), 2))
+                                                                              tf.reduce_prod(sequence_shape[2:])],
+                                                                       )
+                                                            ),
+                                                     axis=2))
+
                         length = tf.reduce_sum(used, 1)
                         length = tf.cast(length, tf.int32)
                         return length
+
 
                 self.computed_lengths = length(self.frame_inputs)
                 self.sequence_lengths = tf.placeholder(tf.int32, shape=[None])
@@ -137,7 +142,7 @@ class AnticipatorRNN(Model):
                 with tf.name_scope('mse_loss'):
                     # Compute Squared Error for each frame
                     frame_squared_errors = tf.square(self.output - self.loss_targets)
-                    mask = tf.sign(tf.reduce_max(tf.abs(self.loss_targets), 2))
+                    mask = tf.sign(tf.abs(self.loss_targets))
                     masked_frame_mse_errors = frame_squared_errors * mask
 
                     # Average Over actual Sequence Lengths
@@ -197,3 +202,48 @@ class AnticipatorRNN(Model):
 
         predictions, self.saved_state = self.sess.run([self.output, self.lstm_state_out], feed_dict=feed_dict)
         return np.squeeze(predictions)
+
+    def train_on_iterator(self, iterator, iterator_sess=None, steps=None, save_every_n_steps=None):
+
+        if not iterator_sess:
+            iterator_sess = self.sess
+
+        local_step = 1
+        while True:
+
+            try:
+                batch_frame_inputs, batch_action_inputs, batch_targets, batch_lengths = iterator_sess.run(iterator)
+            except tf.errors.OutOfRangeError:
+                print("Input_fn ended at step {}".format(local_step))
+                break
+
+            # Train
+            feed_dict = {
+                self.frame_inputs: batch_frame_inputs,
+                self.action_inputs: batch_action_inputs,
+                self.loss_targets: np.expand_dims(batch_targets, axis=2),
+                self.sequence_lengths: batch_lengths
+            }
+
+            _, loss, summaries, step = self.sess.run([self.train_op,
+                                                    self.mse_loss,
+                                                    self.tf_summaries_merged,
+                                                    self.local_step],
+                                                feed_dict=feed_dict)
+
+            # for target in np.squeeze(targets)[0]:
+            #     cv2.imshow("target",np.squeeze(vae.decode_frames(np.expand_dims(target,0)))[:,:,::-1])
+            #     cv2.waitKey(300)
+            # self.writer.add_summary(summaries, step)
+
+            if local_step % 20 == 0 or local_step == 1:
+                print('State RNN Step %i, Loss: %f' % (step, loss))
+
+            if save_every_n_steps and local_step % save_every_n_steps == 0:
+                self.save_model()
+
+            if steps and local_step >= steps:
+                print("Completed {} steps".format(steps))
+                break
+
+            local_step += 1

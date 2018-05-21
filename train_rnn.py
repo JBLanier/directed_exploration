@@ -161,7 +161,7 @@ def debug_play(rnn, vae):
     env.viewer.window.on_key_press = key_press
     env.viewer.window.on_key_release = key_release
 
-    prediction = rnn.predict_on_frames(vae.encode_frames(np.expand_dims(frame, 0)), np.expand_dims(action, 0))
+    prediction = rnn.predict_on_frames_retain_state(vae.encode_frames(np.expand_dims(frame, 0)), np.expand_dims(action, 0))
 
     while True:
         frame, _, _, _ = env.step(action)
@@ -170,7 +170,7 @@ def debug_play(rnn, vae):
         frame = frame / 255.0
         cv2.imshow("encoded_decoded", np.squeeze(vae.encode_decode_frames(np.expand_dims(frame, axis=0)))[:, :, ::-1])
         cv2.imshow("predicted_decoded", np.squeeze(vae.decode_frames(prediction[:, 0, ...]))[:, :, ::-1])
-        prediction = rnn.predict_on_frames(prediction[:, 0, ...], np.expand_dims(action, 0))
+        prediction = rnn.predict_on_frames_retain_state(prediction[:, 0, ...], np.expand_dims(action, 0))
         cv2.imshow("orig", frame[:, :, ::-1])
 
         cv2.waitKey(1)
@@ -207,7 +207,7 @@ def debug_play_box_simple_no_vae(rnn):
         # print(prediction.shape)
         # print(action.shape)
 
-        prediction = rnn.predict_on_frames(np.reshape(prediction, [1, rnn.latent_dim]), np.expand_dims(action, 0))
+        prediction = rnn.predict_on_frames_retain_state(np.reshape(prediction, [1, rnn.latent_dim]), np.expand_dims(action, 0))
         actual_frame, _, _, _ = env.step(action)
 
         cv2.waitKey(1)
@@ -316,7 +316,7 @@ def debug_boxpushsimple_no_vae_from_input_fn(rnn, train_data_dir):
 
 def main(args):
     with tf.Session().as_default():
-        state_rnn = StateRNN(restore_from_dir=args.load_rnn_weights, latent_dim=1)
+        state_rnn = StateRNN(working_dir=args.load_rnn_weights, latent_dim=1)
 
         if args.train_rnn:
             if args.train_data_dir:
@@ -327,7 +327,7 @@ def main(args):
 
         if args.debug_play:
             if args.load_vae_weights and args.load_rnn_weights and not args.simple_encoding:
-                vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=state_rnn.latent_dim)
+                vae = VAE(working_dir=args.load_vae_weights, latent_dim=state_rnn.latent_dim)
                 debug_play(state_rnn, vae)
             elif args.load_rnn_weights and args.simple_encoding:
                 debug_play_box_simple_no_vae(state_rnn)
@@ -337,7 +337,7 @@ def main(args):
 
         if args.debug_from_rollouts:
             if args.load_vae_weights and args.load_rnn_weights and args.train_data_dir:
-                vae = VAE(restore_from_dir=args.load_vae_weights, latent_dim=state_rnn.latent_dim)
+                vae = VAE(working_dir=args.load_vae_weights, latent_dim=state_rnn.latent_dim)
                 debug_from_input_fn(state_rnn, vae, args.train_data_dir)
 
             elif args.simple_encoding and args.load_rnn_weights and args.train_data_dir:

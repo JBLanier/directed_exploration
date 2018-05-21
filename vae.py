@@ -17,13 +17,13 @@ def get_dependencies(tensor):
 
 class VAE(Model):
 
-    def __init__(self, latent_dim=128, restore_from_dir=None, sess=None, graph=None):
+    def __init__(self, latent_dim=128, working_dir=None, sess=None, graph=None):
         print("VAE latent dim {}".format(latent_dim))
 
         self.latent_dim = latent_dim
         save_prefix = "VAE_{}dim".format(self.latent_dim)
 
-        super().__init__(save_prefix, restore_from_dir, sess, graph)
+        super().__init__(save_prefix, working_dir, sess, graph)
 
     def _build_model(self, restore_from_dir=None):
 
@@ -119,9 +119,13 @@ class VAE(Model):
                         tf.summary.scalar('kl_div_loss', self.kl_div_loss)
 
                     with tf.name_scope('reconstruction_loss'):
+                        self.per_frame_reconstruction_loss = tf.sqrt(tf.reduce_sum(tf.square(self.x - self.decoded),
+                                                                                   axis=[1, 2, 3]))
+
                         self.reconstruction_loss = tf.reduce_mean(
                             tf.reduce_sum(tf.square(self.x - self.decoded), axis=[1, 2, 3])
                         )
+
                         tf.summary.scalar('reconstruction_loss', self.reconstruction_loss)
 
                     self.loss = self.kl_div_loss + (self.reconstruction_loss / 100)
@@ -257,6 +261,10 @@ class VAE(Model):
 
     def decode_frames(self, z_codes):
         return self.sess.run(self.decoded, feed_dict={self.z_encoded: z_codes})
+
+    def get_loss_for_decoded_frames(self, z_codes, target_frames):
+        return self.sess.run(self.per_frame_reconstruction_loss, feed_dict={self.z_encoded: z_codes,
+                                                                            self.x: target_frames})
 
     def encode_decode_frames(self, float_frames):
         return self.sess.run(self.decoded, feed_dict={self.x: float_frames})

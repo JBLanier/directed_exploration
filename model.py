@@ -19,7 +19,7 @@ def variable_summaries(var):
 
 class Model(ABC):
 
-    def __init__(self, save_prefix, restore_from_dir=None, sess=None, graph=None):
+    def __init__(self, save_prefix, working_dir=None, sess=None, graph=None):
 
         if not sess:
             sess = tf.get_default_session()
@@ -30,10 +30,16 @@ class Model(ABC):
         self.sess = sess
         self.save_prefix = save_prefix
         date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        if restore_from_dir:
-            self.save_metagraph = False
-            self.identifier = os.path.basename(os.path.normpath(restore_from_dir))
-            self.save_file_path = restore_from_dir
+        restore_from_dir = None
+        if working_dir:
+            if os.path.exists(os.path.join(working_dir, 'checkpoint')):
+                self.save_metagraph = False
+                restore_from_dir = working_dir
+            else:
+                self.save_metagraph = True
+
+            self.identifier = os.path.basename(os.path.normpath(working_dir))
+            self.save_file_path = working_dir
         else:
             self.save_metagraph = True
             self.identifier = '{}_{}'.format(self.save_prefix, date_identifier)

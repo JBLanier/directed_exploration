@@ -12,7 +12,8 @@ import tensorflow as tf
 import time
 import multiprocessing
 from functools import reduce
-
+import datetime
+import os
 import cv2
 
 from anticipator import AnticipatorRNN
@@ -166,16 +167,13 @@ def get_vae_deque_input_fn(episode_deque, batch_size, max_episode_length):
 
 
 def get_state_rnn_deque_input_fn(state_rnn_episodes_deque, batch_size, max_episode_length, latent_dim,
-                                 max_sequence_length):
+                                 max_sequence_length, num_epochs=5):
 
-    def episode_pop_generator():
-        while True:
-            try:
-                e = state_rnn_episodes_deque.pop()
-                print("popped episode shapes {}".format([l.shape for l in e]))
-                yield e
-            except IndexError:
-                break
+    def episode_generator():
+        for _ in range(num_epochs):
+            for episode in state_rnn_episodes_deque:
+                yield episode
+        return
 
     def format_sequence_fn(code_sequence, action_sequence, sequence_length, frame_sequence):
         assert len(code_sequence) == len(action_sequence) == len(frame_sequence) == max_sequence_length
@@ -193,11 +191,11 @@ def get_state_rnn_deque_input_fn(state_rnn_episodes_deque, batch_size, max_episo
         return input_sequence, target_sequence, np.int32(sequence_length - 1), frame_sequence
 
     def slice_shuffle_and_format_fn(x1, x2, x3, x4):
-        episode_length = tf.cast(tf.shape(x1)[0], tf.int64)
+        num_sequences = tf.cast(tf.shape(x1)[0], tf.int64)
 
         inputs = (x1, x2, x3, x4)
 
-        dataset = tf.data.Dataset.from_tensor_slices(inputs).shuffle(buffer_size=episode_length)
+        dataset = tf.data.Dataset.from_tensor_slices(inputs).shuffle(buffer_size=num_sequences)
         return dataset.map(map_func=lambda t1, t2, t3, t4: tuple(tf.py_func(func=format_sequence_fn,
                                                                             inp=[t1, t2, t3, t4],
                                                                             Tout=[tf.float32, tf.float32,
@@ -206,7 +204,7 @@ def get_state_rnn_deque_input_fn(state_rnn_episodes_deque, batch_size, max_episo
                            num_parallel_calls=multiprocessing.cpu_count())
 
     def input_fn():
-        dataset = tf.data.Dataset.from_generator(generator=episode_pop_generator,
+        dataset = tf.data.Dataset.from_generator(generator=episode_generator,
                                                  output_types=(tf.float32, tf.float32, tf.int32, tf.float32),
                                                  output_shapes=(tf.TensorShape([None, max_sequence_length, latent_dim]),
                                                                 tf.TensorShape([None, max_sequence_length, ACTION_DIM]),
@@ -221,7 +219,43 @@ def get_state_rnn_deque_input_fn(state_rnn_episodes_deque, batch_size, max_episo
         dataset = dataset.shuffle(buffer_size=30)
 
         dataset = dataset.batch(batch_size=batch_size)
-        dataset = dataset.prefetch(buffer_size=10)
+        dataset = dataset.prefetch(buffer_size=5)
+
+        iterator = dataset.make_initializable_iterator()
+        return iterator.get_next(), iterator.initializer
+
+    return input_fn
+
+
+def get_anticipator_input_fn(anticipator_deque, batch_size, max_sequence_length, num_epochs=5):
+
+    def episode_generator():
+        for _ in range(num_epochs):
+            for episode in anticipator_deque:
+                yield episode
+        return
+
+    def slice_and_shuffle_fn(x1, x2, x3, x4):
+        num_sequences = tf.cast(tf.shape(x1)[0], tf.int64)
+        return tf.data.Dataset.from_tensor_slices((x1, x2, x3, x4)).shuffle(buffer_size=num_sequences)
+
+    def input_fn():
+        dataset = tf.data.Dataset.from_generator(generator=episode_generator,
+                                                 output_types=(tf.float32, tf.float32, tf.int32, tf.float32),
+                                                 output_shapes=(tf.TensorShape([None, max_sequence_length-1, 64, 64, 3]),
+                                                                tf.TensorShape([None, max_sequence_length-1, ACTION_DIM]),
+                                                                tf.TensorShape([None, max_sequence_length-1]),
+                                                                tf.TensorShape([None])))
+
+        cycle_length = 30
+        dataset = dataset.interleave(map_func=slice_and_shuffle_fn,
+                                     cycle_length=cycle_length,
+                                     block_length=1)
+
+        dataset = dataset.shuffle(buffer_size=30)
+
+        dataset = dataset.batch(batch_size=batch_size)
+        dataset = dataset.prefetch(buffer_size=5)
 
         iterator = dataset.make_initializable_iterator()
         return iterator.get_next(), iterator.initializer
@@ -251,18 +285,16 @@ def divide_episode_into_sequences(episode, max_sequence_length):
 
 def convert_vae_deque_to_state_rnn_deque(vae, vae_deque, state_rnn_episodes_deque, max_sequence_length,
                                          threads=multiprocessing.cpu_count()):
-    def episode_pop_generator():
-        while True:
-            try:
-                yield vae_deque.pop()
-            except IndexError:
-                break
+    def add_episode_to_sequence_deque(episode_ticket_num):
 
-    def add_episode_to_sequence_deque(episode_frames, episode_actions):
+        episode_frames, episode_actions = vae_deque.pop()
 
         episode_frames_sequences, sequence_lengths = divide_episode_into_sequences(episode_frames, max_sequence_length)
         episode_actions_sequences, action_seq_len = divide_episode_into_sequences(episode_actions, max_sequence_length)
         episode_code_sequences = []
+
+        episode_frames = None
+        episode_actions = None
 
         for sequence_index in range(len(episode_frames_sequences)):
             frame_sequence = episode_frames_sequences[sequence_index]
@@ -287,12 +319,80 @@ def convert_vae_deque_to_state_rnn_deque(vae, vae_deque, state_rnn_episodes_dequ
         return sequence_lengths
 
     with multiprocessing.pool.ThreadPool(processes=threads) as pool:
-        episode_sequence_lengths = pool.starmap(func=add_episode_to_sequence_deque, iterable=episode_pop_generator())
+        episode_sequence_lengths = pool.map(func=add_episode_to_sequence_deque, iterable=range(len(vae_deque)))
 
     return episode_sequence_lengths
 
 
-def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim):
+def convert_state_rnn_deque_to_anticipator_deque(vae, state_rnn, state_rnn_deque, anticipator_deque,
+                                                 threads=multiprocessing.cpu_count()):
+    def add_episode_to_sequence_deque(episode_ticket_num):
+
+        code_sequences, action_sequences, sequence_lengths, frame_sequences = state_rnn_deque.pop()
+        # print("\n\nFrame sequnces shape: {}".format(frame_sequences.shape))
+        # print("sequence lengths:\n{}".format(sequence_lengths))
+        input_code_sequences = code_sequences[:, :-1, :]
+        input_action_sequences = action_sequences[:, :-1, :]
+
+        for i, sequence_length in enumerate(sequence_lengths):
+            if sequence_length < len(code_sequences[i]):
+                input_code_sequences[i, sequence_length - 1] = 0
+                input_action_sequences[i, sequence_length - 1] = 0
+
+        num_sequences = code_sequences.shape[0]
+        max_io_sequence_length = len(input_code_sequences[0])
+
+        # print("action sequences:\n{}".format(action_sequences))
+        # print("input action sequences:\n{}".format(input_action_sequences))
+        #
+        # print("code sequences: \n{}".format(code_sequences))
+        # print("input code sequences:\n{}".format(input_code_sequences))
+
+        predictions = state_rnn.predict_on_sequences(input_code_sequences, input_action_sequences,
+                                                     sequence_lengths - 1)
+
+        # print("predictions: \n{}".format(predictions))
+
+        predictions = predictions.reshape((num_sequences * max_io_sequence_length, state_rnn.latent_dim))
+
+        target_frame_sequences_reshaped = frame_sequences[:, 1:, ...].reshape((num_sequences * max_io_sequence_length,
+                                                                       64, 64, 3))
+
+        losses = vae.get_loss_for_decoded_frames(z_codes=predictions, target_frames=target_frame_sequences_reshaped)
+        losses = losses.reshape(num_sequences, max_io_sequence_length)
+
+        # print("losses:\n{}".format(losses))
+
+        input_frame_sequences = frame_sequences[:, :-1, ...]
+        for i, sequence_length in enumerate(sequence_lengths):
+            losses[i, sequence_length - 1:] = 0
+            if sequence_length < len(code_sequences[i]):
+                input_frame_sequences[i, sequence_length - 1] = 0
+
+            assert np.all(input_frame_sequences[i, sequence_length - 1:] == 0)
+            assert np.all(input_action_sequences[i, sequence_length - 1:] == 0)
+            assert not np.all(input_frame_sequences[i, :sequence_length - 1] == 0)
+
+        # print("losses formatted:\n{}".format(losses))
+
+        anticipator_deque.append((input_frame_sequences, input_action_sequences, losses, sequence_lengths - 1))
+
+        return sequence_lengths
+
+    with multiprocessing.pool.ThreadPool(processes=threads) as pool:
+        episode_sequence_lengths = pool.map(func=add_episode_to_sequence_deque,
+                                            iterable=range(len(state_rnn_deque)))
+
+    return episode_sequence_lengths
+
+
+def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, working_dir=None):
+    if working_dir:
+        root_save_dir = working_dir
+    else:
+        date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        root_save_dir = './itexplore_{}'.format(date_identifier)
+
     env = make_boxpush_env(env_id, num_env, seed)
 
     config = tf.ConfigProto()
@@ -300,26 +400,35 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim):
     sess = tf.Session(config=config)
     with sess.as_default():
         anticipator = AnticipatorRNN()
-        vae = VAE(latent_dim=latent_dim, restore_from_dir='VAE_1dim_20180518223003')
-        state_rnn = StateRNN(latent_dim=latent_dim, restore_from_dir='state_rnn_1dim_20180519221250')
-        num_episodes_per_environment = 1
-        max_episode_length = 8
-        max_sequence_length = 8
+        vae = VAE(latent_dim=latent_dim, working_dir=os.path.join(root_save_dir, 'vae'))
+        state_rnn = StateRNN(latent_dim=latent_dim, working_dir=os.path.join(root_save_dir, 'state_rnn'))
+        num_episodes_per_environment = 3
+        max_episode_length = 2000
+        max_sequence_length = 200
         vae_episodes_deque = deque()
         state_rnn_episodes_deque = deque()
+        anticipator_deque = deque()
 
         vae_input_fn = get_vae_deque_input_fn(episode_deque=vae_episodes_deque, batch_size=256,
                                               max_episode_length=max_episode_length)
-        vae_input_fn_iter, vae_input_fn_init_op = vae_input_fn()
 
         state_rnn_input_fn = get_state_rnn_deque_input_fn(state_rnn_episodes_deque=state_rnn_episodes_deque,
-                                                          batch_size=1, max_episode_length=max_episode_length,
+                                                          batch_size=64, max_episode_length=max_episode_length,
                                                           latent_dim=latent_dim,
-                                                          max_sequence_length=max_sequence_length)
+                                                          max_sequence_length=max_sequence_length, num_epochs=5)
+
+        anticipator_input_fn = get_anticipator_input_fn(anticipator_deque=anticipator_deque, batch_size=64,
+                                                        max_sequence_length=max_sequence_length, num_epochs=5)
+
+        anticipator_input_fn_iter, anticipator_input_fn_init_op = anticipator_input_fn()
+        vae_input_fn_iter, vae_input_fn_init_op = vae_input_fn()
         state_rnn_input_fn_iter, state_rnn_input_fn_init_op = state_rnn_input_fn()
 
+        total_episodes_seen = 0
+        total_frames_seen = 0
+
         for iteration in range(num_iterations):
-            print("_" * 20)
+            print('\n' + ("_" * 20))
             print("Iteration {}".format(iteration + 1))
             print("\nExploring and generating rollouts...")
             num_ep, num_frames = generate_rollouts_on_anticipator_policy_into_deque(vae_episodes_deque, anticipator,
@@ -338,58 +447,90 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim):
                                                                             max_sequence_length,
                                                                             threads=12)
 
-            number_of_sequences_written = reduce(lambda acc, episode: acc + len(episode), episode_sequence_lengths, 0)
-            total_frames_written = reduce(lambda acc, episode: acc + sum(episode), episode_sequence_lengths, 0)
+            it_num_of_sequences_written = reduce(lambda acc, episode: acc + len(episode), episode_sequence_lengths, 0)
+            it_total_frames_written = reduce(lambda acc, episode: acc + sum(episode), episode_sequence_lengths, 0)
 
             print("Converted {} episodes to {} sequences ({} frames).".format(len(episode_sequence_lengths),
-                                                                              number_of_sequences_written,
-                                                                              total_frames_written))
+                                                                              it_num_of_sequences_written,
+                                                                              it_total_frames_written))
 
             print("\nTraining State RNN on rollouts...")
             sess.run(state_rnn_input_fn_init_op)
-            # state_rnn.train_on_iterator(state_rnn_input_fn_iter)
+            state_rnn.train_on_iterator(state_rnn_input_fn_iter)
 
-            # Debug visualize state rnn input fn with batch size 1
-            # while True:
-            #
-            #     try:
-            #         batch_inputs, batch_targets, batch_lengths, batch_frames = sess.run(state_rnn_input_fn_iter)
-            #     except tf.errors.OutOfRangeError:
-            #         print("Input_fn ended")
-            #         break
-            #
-            #     prediction = batch_inputs[0, 0, :latent_dim]
-            #     state = None
-            #
-            #     print("batch lengths: {}".format(batch_lengths))
-            #     # print("batch inputs shape {} : \n{}".format(batch_inputs.shape, batch_inputs))
-            #     # print("batch targets shape {} : \n{}".format(batch_targets.shape, batch_targets))
-            #     for i in range(batch_lengths[0]):
-            #         raw_frame = np.squeeze(batch_frames[:, i, ...])
-            #         raw_target_frame = np.squeeze(batch_frames[:, i+1, ...])
-            #         vae_frame = np.squeeze(vae.decode_frames(batch_inputs[:, i, :state_rnn.latent_dim]))
-            #         vae_target_frame = np.squeeze(vae.decode_frames(batch_targets[:, i, :]))
-            #         action = batch_inputs[0, i, state_rnn.latent_dim:]
-            #         feed_dict = {
-            #             state_rnn.sequence_inputs: np.expand_dims(
-            #                 np.expand_dims(np.concatenate((np.reshape(prediction, [latent_dim]), action), axis=0), 0), 0),
-            #             state_rnn.sequence_lengths: np.asarray([1])
-            #         }
-            #
-            #         if state:
-            #             feed_dict[state_rnn.lstm_state_in] = state
-            #
-            #         decoded_input = np.squeeze(vae.decode_frames(np.expand_dims(np.reshape(prediction, [latent_dim]), 0)))
-            #         prediction, state = sess.run([state_rnn.output, state_rnn.lstm_state_out], feed_dict=feed_dict)
-            #         decoded_prediction = np.squeeze(vae.decode_frames(prediction[:, 0, ...]))
-            #
-            #         cv2.imshow('raw actual frame', raw_frame[:,:,::-1])
-            #         cv2.imshow('raw actual next frame ', raw_target_frame[:,:,::-1])
-            #         debug_imshow_image_with_action('decoded actual frame', vae_frame, action)
-            #         debug_imshow_image_with_action('decoded actual next frame ', vae_target_frame, action)
-            #         debug_imshow_image_with_action('prediction input', decoded_input, action)
-            #         debug_imshow_image_with_action('prediction output', decoded_prediction, action)
-            #         cv2.waitKey(800)
+            print("\nFormatting rollout raw input frames with prediction reconstruction loss for Anticipator RNN...")
+            episode_sequence_lengths = convert_state_rnn_deque_to_anticipator_deque(vae, state_rnn, state_rnn_episodes_deque,
+                                                                                    anticipator_deque)
+
+            it_num_of_sequences_written = reduce(lambda acc, episode: acc + len(episode), episode_sequence_lengths, 0)
+            it_total_frames_written = reduce(lambda acc, episode: acc + sum(episode), episode_sequence_lengths, 0)
+
+            print("Converted {} episodes to {} sequences ({} frames).".format(len(episode_sequence_lengths),
+                                                                              it_num_of_sequences_written,
+                                                                              it_total_frames_written))
+
+            print("\nTraining Anticipator on rollouts...")
+            sess.run(anticipator_input_fn_init_op)
+            anticipator.train_on_iterator(anticipator_input_fn_iter)
+            anticipator_deque.clear()
+
+            if iteration % 2 == 0 or iteration == 0:
+                print("\nSaving...")
+                vae.save_model()
+                state_rnn.save_model()
+
+            total_episodes_seen += num_ep
+            total_frames_seen += num_frames
+
+            print("\nTotal episodes seen so far: {}".format(total_episodes_seen))
+            print("Total frames: {}".format(total_frames_seen))
+
+        print("\nDone.\n")
+        vae.save_model()
+        state_rnn.save_model()
+        env.close()
+
+        # Debug visualize state rnn input fn with batch size 1
+        # while True:
+        #
+        #     try:
+        #         batch_inputs, batch_targets, batch_lengths, batch_frames = sess.run(state_rnn_input_fn_iter)
+        #     except tf.errors.OutOfRangeError:
+        #         print("Input_fn ended")
+        #         break
+        #
+        #     prediction = batch_inputs[0, 0, :latent_dim]
+        #     state = None
+        #
+        #     print("batch lengths: {}".format(batch_lengths))
+        #     # print("batch inputs shape {} : \n{}".format(batch_inputs.shape, batch_inputs))
+        #     # print("batch targets shape {} : \n{}".format(batch_targets.shape, batch_targets))
+        #     for i in range(batch_lengths[0]):
+        #         raw_frame = np.squeeze(batch_frames[:, i, ...])
+        #         raw_target_frame = np.squeeze(batch_frames[:, i+1, ...])
+        #         vae_frame = np.squeeze(vae.decode_frames(batch_inputs[:, i, :state_rnn.latent_dim]))
+        #         vae_target_frame = np.squeeze(vae.decode_frames(batch_targets[:, i, :]))
+        #         action = batch_inputs[0, i, state_rnn.latent_dim:]
+        #         feed_dict = {
+        #             state_rnn.sequence_inputs: np.expand_dims(
+        #                 np.expand_dims(np.concatenate((np.reshape(prediction, [latent_dim]), action), axis=0), 0), 0),
+        #             state_rnn.sequence_lengths: np.asarray([1])
+        #         }
+        #
+        #         if state:
+        #             feed_dict[state_rnn.lstm_state_in] = state
+        #
+        #         decoded_input = np.squeeze(vae.decode_frames(np.expand_dims(np.reshape(prediction, [latent_dim]), 0)))
+        #         prediction, state = sess.run([state_rnn.output, state_rnn.lstm_state_out], feed_dict=feed_dict)
+        #         decoded_prediction = np.squeeze(vae.decode_frames(prediction[:, 0, ...]))
+        #
+        #         cv2.imshow('raw actual frame', raw_frame[:,:,::-1])
+        #         cv2.imshow('raw actual next frame ', raw_target_frame[:,:,::-1])
+        #         debug_imshow_image_with_action('decoded actual frame', vae_frame, action)
+        #         debug_imshow_image_with_action('decoded actual next frame ', vae_target_frame, action)
+        #         debug_imshow_image_with_action('prediction input', decoded_input, action)
+        #         debug_imshow_image_with_action('prediction output', decoded_prediction, action)
+        #         cv2.waitKey(800)
 
         # iteration = 0
         # while True:
@@ -416,4 +557,5 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim):
 
 
 if __name__ == '__main__':
-    do_iterative_exploration('boxpushsimple-v0', num_env=60, num_iterations=1, latent_dim=1)
+    # do_iterative_exploration('boxpushsimple-v0', num_env=60, num_iterations=10, latent_dim=1, working_dir=None)
+    do_iterative_exploration('boxpushsimple-v0', num_env=1, num_iterations=10, latent_dim=1, working_dir='itexplore_no_anticipator_training_boxpushsimple')
