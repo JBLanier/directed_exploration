@@ -1,19 +1,14 @@
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import norm
 import tensorflow as tf
-import os
-import datetime
-import cv2
-from vae import VAE
-from model import Model
-from tensorflow.python import debug as tf_debug
+from directed_exploration.model import Model
+import logging
 
+logger = logging.getLogger(__name__)
 
 class AnticipatorRNN(Model):
 
     def __init__(self, action_dim=2, working_dir=None, sess=None, graph=None):
-        print("Anticipator, action dim {}".format(action_dim))
+        logger.info("Anticipator, action dim {}".format(action_dim))
 
         self.action_dim = action_dim
         self.saved_state = None
@@ -95,10 +90,6 @@ class AnticipatorRNN(Model):
                 lstm_input = tf.concat((encode_4_reshape_for_lstm, self.action_inputs), axis=2)
 
 
-                print("encode 4 shape: {}".format(encode_4.shape))
-
-                print("LSTM input shape: {}".format(lstm_input.shape))
-
                 lstm_cell = tf.nn.rnn_cell.MultiRNNCell([
                     tf.nn.rnn_cell.LSTMCell(512),
                     tf.nn.rnn_cell.LSTMCell(256),
@@ -134,7 +125,8 @@ class AnticipatorRNN(Model):
                 # dense2 = tf.Print(dense2,[dense2,tf.shape(dense2)], "dense 2 output: ")
 
                 # reshape dense output back to (batch_size, max_seq_length, ...)
-                self.output = tf.reshape(dense2, shape=[frame_input_shape[0], frame_input_shape[1], dense2.shape[-1]])
+                with tf.control_dependencies([tf.assert_less_equal(self.frame_inputs, 1.0)]):
+                    self.output = tf.reshape(dense2, shape=[frame_input_shape[0], frame_input_shape[1], dense2.shape[-1]])
 
                 # self.output = tf.Print(self.output, [self.output, tf.shape(self.output)], "dense 2 output reshaped: ")
                 # self.output = tf.Print(self.output, [self.computed_lengths, tf.shape(self.computed_lengths), self.sequence_lengths, tf.shape(self.sequence_lengths)], 'computed and given sequence lengths')
@@ -145,11 +137,12 @@ class AnticipatorRNN(Model):
                     mask = tf.sign(tf.abs(self.loss_targets))
                     masked_frame_mse_errors = frame_squared_errors * mask
 
+
                     # Average Over actual Sequence Lengths
                     with tf.control_dependencies(
-                            [tf.assert_equal(tf.cast(tf.reduce_sum(mask, [1, 2]), dtype=tf.int32), self.sequence_lengths),
-                             tf.assert_equal(self.computed_lengths, self.sequence_lengths),
-                             tf.assert_equal(self.computed_lengths, length(self.loss_targets))
+                            [tf.assert_equal(tf.cast(tf.reduce_sum(mask, [1, 2]), dtype=tf.int32), self.sequence_lengths, summarize=999999,name='computed_mask_length_vs_self.sequence_lengths', data=[tf.cast(tf.reduce_sum(mask, [1, 2]), dtype=tf.int32),self.sequence_lengths,mask, self.loss_targets]),
+                             tf.assert_equal(self.computed_lengths, self.sequence_lengths, summarize=9999, name='computed_lengths_vs_self.sequence_lengths', data=[self.sequence_lengths,  length(self.loss_targets)]),
+                             tf.assert_equal(self.computed_lengths, length(self.loss_targets), summarize=9999, name='computed_lengths_vs_length_loss_targets')
                              ]):
                         mse_over_sequences = tf.reduce_sum(masked_frame_mse_errors, 1) / tf.cast(self.sequence_lengths,
                                                                                                  dtype=tf.float32)
@@ -180,7 +173,7 @@ class AnticipatorRNN(Model):
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
-            print("\nrunning Anticipator local init\n")
+            logger.debug("running Anticipator local init\n")
             self.sess.run(self.init)
 
         self.writer.add_graph(self.graph)
@@ -214,7 +207,7 @@ class AnticipatorRNN(Model):
             try:
                 batch_frame_inputs, batch_action_inputs, batch_targets, batch_lengths = iterator_sess.run(iterator)
             except tf.errors.OutOfRangeError:
-                print("Input_fn ended at step {}".format(local_step))
+                logger.debug("Input_fn ended at step {}".format(local_step))
                 break
 
             # Train
@@ -237,13 +230,13 @@ class AnticipatorRNN(Model):
             # self.writer.add_summary(summaries, step)
 
             if local_step % 20 == 0 or local_step == 1:
-                print('State RNN Step %i, Loss: %f' % (step, loss))
+                logger.debug('Anticipator RNN Step %i, Loss: %f' % (step, loss))
 
             if save_every_n_steps and local_step % save_every_n_steps == 0:
                 self.save_model()
 
             if steps and local_step >= steps:
-                print("Completed {} steps".format(steps))
+                logger.debug("Completed {} steps".format(steps))
                 break
 
             local_step += 1

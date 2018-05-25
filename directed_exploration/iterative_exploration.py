@@ -1,12 +1,9 @@
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
-from baselines.common.vec_env.vec_frame_stack import VecFrameStack
-from baselines.common import set_global_seeds
 
 import gym
 import gym_boxpush
 import numpy as np
 import random
-import math
 from collections import deque
 import tensorflow as tf
 import time
@@ -16,14 +13,19 @@ import datetime
 import os
 import cv2
 
-from anticipator import AnticipatorRNN
-from vae import VAE
-from state_rnn import StateRNN
+from directed_exploration.anticipator import AnticipatorRNN
+from directed_exploration.vae import VAE
+from directed_exploration.state_rnn import StateRNN
+import logging
+
+logger = logging.getLogger(__name__)
 
 seed = 42
 
 ACTIONS = [[0, 0], [1, 0], [1, -1]]
 ACTION_DIM = 2
+
+np.set_printoptions(threshold=np.nan)
 
 
 def debug_imshow_image_with_action(window_label, frame, action):
@@ -122,9 +124,9 @@ def generate_rollouts_on_anticipator_policy_into_deque(episode_deque, anticipato
             episode_actions[env_index].resize((episode_lengths[env_index], ACTION_DIM))
             episode_deque.append((episode_frames[env_index], episode_actions[env_index]))
         end = time.time()
-        print("generated episodes with lengths: {}".format(episode_lengths))
+        logger.debug("generated episodes with lengths: {}".format(episode_lengths))
         running_time = end - start
-        print("took {} seconds, per-environment efficiency is {}".format(running_time, num_env / running_time))
+        logger.debug("took {} seconds, per-environment efficiency is {}".format(running_time, num_env / running_time))
         total_frames += sum(episode_lengths)
 
     return num_episodes_per_environment * num_env, total_frames
@@ -242,7 +244,7 @@ def get_anticipator_input_fn(anticipator_deque, batch_size, max_sequence_length,
 
     def input_fn():
         dataset = tf.data.Dataset.from_generator(generator=episode_generator,
-                                                 output_types=(tf.float32, tf.float32, tf.int32, tf.float32),
+                                                 output_types=(tf.float32, tf.float32, tf.float32, tf.int32),
                                                  output_shapes=(tf.TensorShape([None, max_sequence_length-1, 64, 64, 3]),
                                                                 tf.TensorShape([None, max_sequence_length-1, ACTION_DIM]),
                                                                 tf.TensorShape([None, max_sequence_length-1]),
@@ -330,8 +332,8 @@ def convert_state_rnn_deque_to_anticipator_deque(vae, state_rnn, state_rnn_deque
     def add_episode_to_sequence_deque(episode_ticket_num):
 
         code_sequences, action_sequences, sequence_lengths, frame_sequences = state_rnn_deque.pop()
-        # print("\n\nFrame sequnces shape: {}".format(frame_sequences.shape))
-        # print("sequence lengths:\n{}".format(sequence_lengths))
+        # logger.info("\n\nFrame sequnces shape: {}".format(frame_sequences.shape))
+        # logger.info("sequence lengths:\n{}".format(sequence_lengths))
         input_code_sequences = code_sequences[:, :-1, :]
         input_action_sequences = action_sequences[:, :-1, :]
 
@@ -343,16 +345,16 @@ def convert_state_rnn_deque_to_anticipator_deque(vae, state_rnn, state_rnn_deque
         num_sequences = code_sequences.shape[0]
         max_io_sequence_length = len(input_code_sequences[0])
 
-        # print("action sequences:\n{}".format(action_sequences))
-        # print("input action sequences:\n{}".format(input_action_sequences))
+        # logger.info("action sequences:\n{}".format(action_sequences))
+        # logger.info("input action sequences:\n{}".format(input_action_sequences))
         #
-        # print("code sequences: \n{}".format(code_sequences))
-        # print("input code sequences:\n{}".format(input_code_sequences))
+        # logger.info("code sequences: \n{}".format(code_sequences))
+        # logger.info("input code sequences:\n{}".format(input_code_sequences))
 
         predictions = state_rnn.predict_on_sequences(input_code_sequences, input_action_sequences,
                                                      sequence_lengths - 1)
 
-        # print("predictions: \n{}".format(predictions))
+        # logger.info("predictions: \n{}".format(predictions))
 
         predictions = predictions.reshape((num_sequences * max_io_sequence_length, state_rnn.latent_dim))
 
@@ -361,8 +363,6 @@ def convert_state_rnn_deque_to_anticipator_deque(vae, state_rnn, state_rnn_deque
 
         losses = vae.get_loss_for_decoded_frames(z_codes=predictions, target_frames=target_frame_sequences_reshaped)
         losses = losses.reshape(num_sequences, max_io_sequence_length)
-
-        # print("losses:\n{}".format(losses))
 
         input_frame_sequences = frame_sequences[:, :-1, ...]
         for i, sequence_length in enumerate(sequence_lengths):
@@ -374,7 +374,6 @@ def convert_state_rnn_deque_to_anticipator_deque(vae, state_rnn, state_rnn_deque
             assert np.all(input_action_sequences[i, sequence_length - 1:] == 0)
             assert not np.all(input_frame_sequences[i, :sequence_length - 1] == 0)
 
-        # print("losses formatted:\n{}".format(losses))
 
         anticipator_deque.append((input_frame_sequences, input_action_sequences, losses, sequence_lengths - 1))
 
@@ -387,25 +386,20 @@ def convert_state_rnn_deque_to_anticipator_deque(vae, state_rnn, state_rnn_deque
     return episode_sequence_lengths
 
 
-def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, working_dir=None):
-    if working_dir:
-        root_save_dir = working_dir
-    else:
-        date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        root_save_dir = './itexplore_{}'.format(date_identifier)
+def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, working_dir):
 
     env = make_boxpush_env(env_id, num_env, seed)
 
-    config = tf.ConfigProto()
+    config = tf.ConfigProto(allow_soft_placement=True)
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
     with sess.as_default():
         anticipator = AnticipatorRNN()
-        vae = VAE(latent_dim=latent_dim, working_dir=os.path.join(root_save_dir, 'vae'))
-        state_rnn = StateRNN(latent_dim=latent_dim, working_dir=os.path.join(root_save_dir, 'state_rnn'))
-        num_episodes_per_environment = 1
-        max_episode_length = 9
-        max_sequence_length = 3
+        vae = VAE(latent_dim=latent_dim, working_dir=os.path.join(working_dir, 'vae'))
+        state_rnn = StateRNN(latent_dim=latent_dim, working_dir=os.path.join(working_dir, 'state_rnn'))
+        num_episodes_per_environment = 3
+        max_episode_length = 2000
+        max_sequence_length = 200
         vae_episodes_deque = deque()
         state_rnn_episodes_deque = deque()
         anticipator_deque = deque()
@@ -418,8 +412,8 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
                                                           latent_dim=latent_dim,
                                                           max_sequence_length=max_sequence_length, num_epochs=5)
 
-        anticipator_input_fn = get_anticipator_input_fn(anticipator_deque=anticipator_deque, batch_size=64,
-                                                        max_sequence_length=max_sequence_length, num_epochs=5)
+        anticipator_input_fn = get_anticipator_input_fn(anticipator_deque=anticipator_deque, batch_size=16,
+                                                        max_sequence_length=max_sequence_length, num_epochs=1)
 
         anticipator_input_fn_iter, anticipator_input_fn_init_op = anticipator_input_fn()
         vae_input_fn_iter, vae_input_fn_init_op = vae_input_fn()
@@ -429,20 +423,20 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
         total_frames_seen = 0
 
         for iteration in range(num_iterations):
-            print('\n' + ("_" * 20))
-            print("Iteration {}".format(iteration + 1))
-            print("\nExploring and generating rollouts...")
+            logger.info("_" * 20)
+            logger.info("Iteration {}".format(iteration + 1))
+            logger.debug("Exploring and generating rollouts...")
             num_ep, num_frames = generate_rollouts_on_anticipator_policy_into_deque(vae_episodes_deque, anticipator,
                                                                                     env, num_env,
                                                                                     num_episodes_per_environment,
                                                                                     max_episode_length, ACTIONS)
-            print("Generated {} episodes in total ({} frames)".format(num_ep, num_frames))
+            logger.debug("Generated {} episodes in total ({} frames)".format(num_ep, num_frames))
 
-            print("\nTraining VAE on rollouts...")
+            logger.debug("Training VAE on rollouts...")
             sess.run(vae_input_fn_init_op)
             vae.train_on_iterator(vae_input_fn_iter)
 
-            print("\nFormatting rollouts for State RNN...")
+            logger.debug("Formatting rollouts for State RNN...")
             episode_sequence_lengths = convert_vae_deque_to_state_rnn_deque(vae, vae_episodes_deque,
                                                                             state_rnn_episodes_deque,
                                                                             max_sequence_length,
@@ -451,42 +445,42 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
             it_num_of_sequences_written = reduce(lambda acc, episode: acc + len(episode), episode_sequence_lengths, 0)
             it_total_frames_written = reduce(lambda acc, episode: acc + sum(episode), episode_sequence_lengths, 0)
 
-            print("Converted {} episodes to {} sequences ({} frames).".format(len(episode_sequence_lengths),
+            logger.debug("Converted {} episodes to {} sequences ({} frames).".format(len(episode_sequence_lengths),
                                                                               it_num_of_sequences_written,
                                                                               it_total_frames_written))
 
-            print("\nTraining State RNN on rollouts...")
+            logger.debug("Training State RNN on rollouts...")
             sess.run(state_rnn_input_fn_init_op)
             state_rnn.train_on_iterator(state_rnn_input_fn_iter)
 
-            print("\nFormatting rollout raw input frames with prediction reconstruction loss for Anticipator RNN...")
+            logger.debug("Formatting rollout raw input frames with prediction reconstruction loss for Anticipator RNN...")
             episode_sequence_lengths = convert_state_rnn_deque_to_anticipator_deque(vae, state_rnn, state_rnn_episodes_deque,
                                                                                     anticipator_deque)
 
             it_num_of_sequences_written = reduce(lambda acc, episode: acc + len(episode), episode_sequence_lengths, 0)
             it_total_frames_written = reduce(lambda acc, episode: acc + sum(episode), episode_sequence_lengths, 0)
 
-            print("Converted {} episodes to {} sequences ({} frames).".format(len(episode_sequence_lengths),
+            logger.debug("Converted {} episodes to {} sequences ({} frames).".format(len(episode_sequence_lengths),
                                                                               it_num_of_sequences_written,
                                                                               it_total_frames_written))
 
-            print("\nTraining Anticipator on rollouts...")
+            logger.debug("Training Anticipator on rollouts...")
             sess.run(anticipator_input_fn_init_op)
             anticipator.train_on_iterator(anticipator_input_fn_iter)
             anticipator_deque.clear()
 
             if iteration % 2 == 0 or iteration == 0:
-                print("\nSaving...")
+                logger.info("Saving...")
                 vae.save_model()
                 state_rnn.save_model()
 
             total_episodes_seen += num_ep
             total_frames_seen += num_frames
 
-            print("\nTotal episodes seen so far: {}".format(total_episodes_seen))
-            print("Total frames: {}".format(total_frames_seen))
+            logger.info("Total episodes seen so far: {}".format(total_episodes_seen))
+            logger.info("Total frames: {}".format(total_frames_seen))
 
-        print("\nDone.\n")
+        logger.info("Done.")
         vae.save_model()
         state_rnn.save_model()
         env.close()
@@ -497,15 +491,15 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
         #     try:
         #         batch_inputs, batch_targets, batch_lengths, batch_frames = sess.run(state_rnn_input_fn_iter)
         #     except tf.errors.OutOfRangeError:
-        #         print("Input_fn ended")
+        #         logger.info("Input_fn ended")
         #         break
         #
         #     prediction = batch_inputs[0, 0, :latent_dim]
         #     state = None
         #
-        #     print("batch lengths: {}".format(batch_lengths))
-        #     # print("batch inputs shape {} : \n{}".format(batch_inputs.shape, batch_inputs))
-        #     # print("batch targets shape {} : \n{}".format(batch_targets.shape, batch_targets))
+        #     logger.info("batch lengths: {}".format(batch_lengths))
+        #     # logger.info("batch inputs shape {} : \n{}".format(batch_inputs.shape, batch_inputs))
+        #     # logger.info("batch targets shape {} : \n{}".format(batch_targets.shape, batch_targets))
         #     for i in range(batch_lengths[0]):
         #         raw_frame = np.squeeze(batch_frames[:, i, ...])
         #         raw_target_frame = np.squeeze(batch_frames[:, i+1, ...])
@@ -539,24 +533,19 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
         #         frame, action = sess.run(vae_input_fn_iter)
         #     except tf.errors.OutOfRangeError:
         #         break
-        #     print(iteration)
+        #     logger.info(iteration)
         #     # debug_imshow_image_with_action("episode", frame, action)
         #     # cv2.waitKey(1)
         #     iteration += 1
 
     #
-    # print(len(episode_deque))
+    # logger.info(len(episode_deque))
     # length = len(episode_deque)
     # for i in range(length):
     #     episode = episode_deque.pop()
-    #     print("episode {}, length {}".format(i, len(episode[0])))
+    #     logger.info("episode {}, length {}".format(i, len(episode[0])))
     #     for j in range(len(episode[0])):
     #         debug_imshow_image_with_action("episode {}".format(i), episode[0][j, :, :, ::-1], episode[1][j])
     #         cv2.waitKey(500)
-    # print('done')
+    # logger.info('done')
     # env.close()
-
-
-if __name__ == '__main__':
-    do_iterative_exploration('boxpushsimple-v0', num_env=48, num_iterations=10, latent_dim=1, working_dir=None)
-    # do_iterative_exploration('boxpushsimple-v0', num_env=1, num_iterations=10, latent_dim=1, working_dir='itexplore_no_anticipator_training_boxpushsimple')

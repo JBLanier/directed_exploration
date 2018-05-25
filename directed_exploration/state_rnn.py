@@ -1,20 +1,16 @@
 
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import norm
 import tensorflow as tf
-import os
-import datetime
-from model import Model
-import cv2
-from vae import VAE
-from tensorflow.python import debug as tf_debug
+from directed_exploration.model import Model
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class StateRNN(Model):
 
     def __init__(self, latent_dim=4, action_dim=2, working_dir=None, sess=None, graph=None):
-        print("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
+        logger.info("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
 
         self.latent_dim = latent_dim
         self.action_dim = action_dim
@@ -111,9 +107,9 @@ class StateRNN(Model):
                     masked_frame_mse_errors = frame_mean_squared_errors * mask
 
                     # Average Over actual Sequence Lengths
-                    with tf.control_dependencies([tf.assert_equal(tf.cast(tf.reduce_sum(mask, 1), dtype=tf.int32), self.sequence_lengths),
-                                                  tf.assert_equal(self.computed_lengths, self.sequence_lengths),
-                                                  tf.assert_equal(self.computed_lengths, length(self.sequence_targets))
+                    with tf.control_dependencies([tf.assert_equal(tf.cast(tf.reduce_sum(mask, 1), dtype=tf.int32), self.sequence_lengths, name='mask_length_vs_self.sequence_lengths', summarize=999999),
+                                                  tf.assert_equal(self.computed_lengths, self.sequence_lengths, name='computed_length_vs_self.sequence_lengths', summarize=999999),
+                                                  tf.assert_equal(self.computed_lengths, length(self.sequence_targets), name='computed_length_vs_sequence_targets_length', summarize=999999)
                                                   ]):
 
                         mse_over_sequences = tf.reduce_sum(masked_frame_mse_errors, 1) / tf.cast(self.sequence_lengths, dtype=tf.float32)
@@ -144,7 +140,7 @@ class StateRNN(Model):
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
-            print("\nRunning State RNN local init\n")
+            logger.debug("Running State RNN local init\n")
             self.sess.run(self.init)
 
         self.writer.add_graph(self.graph)
@@ -168,7 +164,7 @@ class StateRNN(Model):
                 try:
                     batch_inputs, batch_targets, batch_lengths = sess.run(iter)
                 except tf.errors.OutOfRangeError:
-                    print("Input_fn ended at step {}".format(local_step))
+                    logger.debug("Input_fn ended at step {}".format(local_step))
                     break
 
                 # Train
@@ -190,13 +186,13 @@ class StateRNN(Model):
                 # self.writer.add_summary(summaries, step)
 
                 if local_step % 20 == 0 or local_step == 1:
-                    print('Step %i, Loss: %f' % (step, loss))
+                    logger.debug('Step %i, Loss: %f' % (step, loss))
 
                 if local_step % 1000 == 0:
                     self.save_model()
 
                 if steps and local_step >= steps:
-                    print("Completed {} steps".format(steps))
+                    logger.debug("Completed {} steps".format(steps))
                     break
 
                 local_step += 1
@@ -212,7 +208,7 @@ class StateRNN(Model):
             try:
                 batch_inputs, batch_targets, batch_lengths, batch_frames =iterator_sess.run(iterator)
             except tf.errors.OutOfRangeError:
-                print("Input_fn ended at step {}".format(local_step))
+                logger.debug("Input_fn ended at step {}".format(local_step))
                 break
 
             # Train
@@ -234,13 +230,13 @@ class StateRNN(Model):
             # self.writer.add_summary(summaries, step)
 
             if local_step % 20 == 0 or local_step == 1:
-                print('State RNN Step %i, Loss: %f' % (step, loss))
+                logger.debug('State RNN Step %i, Loss: %f' % (step, loss))
 
             if save_every_n_steps and local_step % save_every_n_steps == 0:
                 self.save_model()
 
             if steps and local_step >= steps:
-                print("Completed {} steps".format(steps))
+                logger.debug("Completed {} steps".format(steps))
                 break
 
             local_step += 1

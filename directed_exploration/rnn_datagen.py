@@ -2,16 +2,14 @@ import pickle
 import numpy as np
 import os
 import tensorflow as tf
-import re
 import cv2
 import multiprocessing
 import argparse
 import re
 import itertools
 from functools import reduce
-from vae import VAE
+from directed_exploration.vae import VAE
 import gym
-import gym_boxpush
 import random
 
 # Dimensionality of actions to read from vae tf_records and pass to rnn

@@ -2,3 +2,6 @@
 weights/
 __pycache__
 graph/
+*.egg-info
+tensorboard
+*.log

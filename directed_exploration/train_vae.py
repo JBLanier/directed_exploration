@@ -1,21 +1,14 @@
 import pygame
 import gym
-import gym_boxpush
-import pyglet
 import math
 import numpy as np
 import cv2
 import time
 import multiprocessing
-import random
-from vae import VAE
-from queue import Empty
-import sys
+from directed_exploration.vae import VAE
 import datetime
-from matplotlib import pyplot as plt
 import argparse
 from tkinter import *
-from keras.callbacks import ModelCheckpoint, TensorBoard
 import os
 import re
 import tensorflow as tf

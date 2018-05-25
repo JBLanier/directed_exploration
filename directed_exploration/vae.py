@@ -1,11 +1,8 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import norm
 import tensorflow as tf
-import os
-from model import Model
-import datetime
-from tensorflow.python import debug as tf_debug
+from directed_exploration.model import Model
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Function to get *all* dependencies of a tensor.
 def get_dependencies(tensor):
@@ -18,7 +15,7 @@ def get_dependencies(tensor):
 class VAE(Model):
 
     def __init__(self, latent_dim=128, working_dir=None, sess=None, graph=None):
-        print("VAE latent dim {}".format(latent_dim))
+        logger.info("VAE latent dim {}".format(latent_dim))
 
         self.latent_dim = latent_dim
         save_prefix = "VAE_{}dim".format(self.latent_dim)
@@ -27,7 +24,7 @@ class VAE(Model):
 
     def _build_model(self, restore_from_dir=None):
 
-        with self.graph.as_default():
+        with self.graph.as_default(), tf.device('/gpu:1'):
             vae_scope = 'VAE_MODEL'
             with tf.variable_scope(vae_scope):
                 variance_scaling = tf.contrib.layers.variance_scaling_initializer()
@@ -153,7 +150,7 @@ class VAE(Model):
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
-            print("\nrunning VAE local init\n")
+            logger.debug("running VAE local init\n")
             self.sess.run(self.init)
 
         self.writer.add_graph(self.graph)
@@ -177,7 +174,7 @@ class VAE(Model):
                 try:
                     batch_x = sess.run(iter)
                 except tf.errors.OutOfRangeError:
-                    print("Input_fn ended at step {}".format(local_step))
+                    logger.debug("Input_fn ended at step {}".format(local_step))
                     break
 
                 # Train
@@ -193,13 +190,13 @@ class VAE(Model):
                 self.writer.add_summary(summaries, local_step)
 
                 if local_step % 50 == 0 or local_step == 1:
-                    print('Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
+                    logger.debug('Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
 
                 if local_step % save_every_n_steps == 0:
                     self.save_model()
 
                 if steps and local_step >= steps:
-                    print("Completed {} steps".format(steps))
+                    logger.debug("Completed {} steps".format(steps))
                     break
 
                 local_step += 1
@@ -215,7 +212,7 @@ class VAE(Model):
             try:
                 batch_x = iterator_sess.run(iterator)
             except tf.errors.OutOfRangeError:
-                print("Input_fn ended at step {}".format(local_step))
+                logger.debug("Input_fn ended at step {}".format(local_step))
                 break
             #
             # print("\n\nloss dependecies")
@@ -245,13 +242,13 @@ class VAE(Model):
             self.writer.add_summary(summaries, local_step)
 
             if local_step % 50 == 0 or local_step == 1:
-                print('VAE Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
+                logger.debug('VAE Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
 
             if save_every_n_steps and local_step % save_every_n_steps == 0:
                 self.save_model()
 
             if steps and local_step >= steps:
-                print("Completed {} steps".format(steps))
+                logger.debug("Completed {} steps".format(steps))
                 break
 
             local_step += 1

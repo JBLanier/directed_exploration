@@ -1,19 +1,14 @@
-from state_rnn import StateRNN
+from directed_exploration.state_rnn import StateRNN
 import argparse
-import random
-import math
 import numpy as np
 import os
 import re
 import pickle
 import tensorflow as tf
 import multiprocessing
-from vae import VAE
+from directed_exploration.vae import VAE
 import gym
-import gym_boxpush
 import cv2
-import pygame
-import time
 
 MAX_SEQUENCES_PER_RNN_TF_RECORD = 5
 
@@ -315,7 +310,10 @@ def debug_boxpushsimple_no_vae_from_input_fn(rnn, train_data_dir):
 
 
 def main(args):
-    with tf.Session().as_default():
+    config = tf.ConfigProto(allow_soft_placement=True)
+    config.gpu_options.allow_growth = True
+    sess = tf.Session(config=config)
+    with sess.as_default():
         state_rnn = StateRNN(working_dir=args.load_rnn_weights, latent_dim=1)
 
         if args.train_rnn:

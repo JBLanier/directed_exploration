@@ -2,7 +2,9 @@ from abc import ABC, abstractmethod
 import tensorflow as tf
 import datetime
 import os
+import logging
 
+logger = logging.getLogger(__name__)
 
 def variable_summaries(var):
   """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
@@ -57,7 +59,7 @@ class Model(ABC):
             self._restore_model(restore_from_dir)
 
     def _restore_model(self, from_dir):
-        print("\n\nRestoring {} model from {}".format(self.save_prefix, from_dir))
+        logger.info("Restoring {} model from {}".format(self.save_prefix, from_dir))
         self.saver.restore(self.sess, tf.train.latest_checkpoint(from_dir))
 
     def save_model(self):
@@ -71,7 +73,7 @@ class Model(ABC):
 
         self.save_metagraph = False
 
-        print("{} model saved in path: {}".format(self.save_prefix, save_path))
+        logger.info("{} model saved in path: {}".format(self.save_prefix, save_path))
 
     def __del__(self):
         if self.writer:
