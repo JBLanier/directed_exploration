@@ -21,7 +21,7 @@ def variable_summaries(var):
 
 class Model(ABC):
 
-    def __init__(self, save_prefix, working_dir=None, sess=None, graph=None):
+    def __init__(self, save_prefix, working_dir=None, sess=None, graph=None, summary_writer=None):
 
         if not sess:
             sess = tf.get_default_session()
@@ -34,21 +34,25 @@ class Model(ABC):
         date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         restore_from_dir = None
         if working_dir:
-            if os.path.exists(os.path.join(working_dir, 'checkpoint')):
+            self.save_file_path = os.path.join(working_dir, self.save_prefix)
+
+            if os.path.exists(os.path.join(self.save_file_path, 'checkpoint')):
                 self.save_metagraph = False
-                restore_from_dir = working_dir
+                restore_from_dir = self.save_file_path
             else:
                 self.save_metagraph = True
 
-            self.identifier = os.path.basename(os.path.normpath(working_dir))
-            self.save_file_path = working_dir
+            self.identifier = os.path.basename(os.path.normpath(self.save_file_path))
         else:
             self.save_metagraph = True
             self.identifier = '{}_{}'.format(self.save_prefix, date_identifier)
             self.save_file_path = './' + self.identifier
 
-        self.tensorboard_path = './tensorboard'
-        self.writer = tf.summary.FileWriter("{}/{}".format(self.tensorboard_path, self.identifier))
+        if summary_writer:
+            self.writer = summary_writer
+        else:
+            self.writer = tf.summary.FileWriter(working_dir)
+
         self._build_model(restore_from_dir)
 
     @abstractmethod

@@ -14,17 +14,17 @@ def get_dependencies(tensor):
 
 class VAE(Model):
 
-    def __init__(self, latent_dim=128, working_dir=None, sess=None, graph=None):
+    def __init__(self, latent_dim=128, working_dir=None, sess=None, graph=None, summary_writer=None):
         logger.info("VAE latent dim {}".format(latent_dim))
 
         self.latent_dim = latent_dim
         save_prefix = "VAE_{}dim".format(self.latent_dim)
 
-        super().__init__(save_prefix, working_dir, sess, graph)
+        super().__init__(save_prefix, working_dir, sess, graph, summary_writer=summary_writer)
 
     def _build_model(self, restore_from_dir=None):
 
-        with self.graph.as_default(), tf.device('/gpu:1'):
+        with self.graph.as_default():
             vae_scope = 'VAE_MODEL'
             with tf.variable_scope(vae_scope):
                 variance_scaling = tf.contrib.layers.variance_scaling_initializer()
@@ -150,7 +150,7 @@ class VAE(Model):
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
-            logger.debug("running VAE local init\n")
+            logger.debug("Running VAE local init\n")
             self.sess.run(self.init)
 
         self.writer.add_graph(self.graph)
@@ -206,13 +206,13 @@ class VAE(Model):
         if not iterator_sess:
             iterator_sess = self.sess
 
-        local_step = 1
+        train_loop_step = 1
         while True:
 
             try:
                 batch_x = iterator_sess.run(iterator)
             except tf.errors.OutOfRangeError:
-                logger.debug("Input_fn ended at step {}".format(local_step))
+                logger.debug("Input_fn ended at step {}".format(train_loop_step))
                 break
             #
             # print("\n\nloss dependecies")
@@ -239,19 +239,19 @@ class VAE(Model):
                                                      self.local_step],
                                                     feed_dict=feed_dict)
 
-            self.writer.add_summary(summaries, local_step)
+            self.writer.add_summary(summaries, step)
 
-            if local_step % 50 == 0 or local_step == 1:
+            if train_loop_step % 50 == 0 or train_loop_step == 1:
                 logger.debug('VAE Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
 
-            if save_every_n_steps and local_step % save_every_n_steps == 0:
+            if save_every_n_steps and train_loop_step % save_every_n_steps == 0:
                 self.save_model()
 
-            if steps and local_step >= steps:
+            if steps and train_loop_step >= steps:
                 logger.debug("Completed {} steps".format(steps))
                 break
 
-            local_step += 1
+            train_loop_step += 1
 
     def encode_frames(self, float_frames):
         return self.sess.run(self.z_encoded, feed_dict={self.x: float_frames})

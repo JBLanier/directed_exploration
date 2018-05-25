@@ -7,14 +7,14 @@ logger = logging.getLogger(__name__)
 
 class AnticipatorRNN(Model):
 
-    def __init__(self, action_dim=2, working_dir=None, sess=None, graph=None):
+    def __init__(self, action_dim=2, working_dir=None, sess=None, graph=None, summary_writer=None):
         logger.info("Anticipator, action dim {}".format(action_dim))
 
         self.action_dim = action_dim
         self.saved_state = None
         save_prefix = 'anticipator_rnn'
 
-        super().__init__(save_prefix, working_dir, sess=sess, graph=graph)
+        super().__init__(save_prefix, working_dir, sess=sess, graph=graph, summary_writer=summary_writer)
 
     def _build_model(self, restore_from_dir=None):
 
@@ -173,7 +173,7 @@ class AnticipatorRNN(Model):
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
-            logger.debug("running Anticipator local init\n")
+            logger.debug("Running Anticipator local init\n")
             self.sess.run(self.init)
 
         self.writer.add_graph(self.graph)
@@ -227,7 +227,7 @@ class AnticipatorRNN(Model):
             # for target in np.squeeze(targets)[0]:
             #     cv2.imshow("target",np.squeeze(vae.decode_frames(np.expand_dims(target,0)))[:,:,::-1])
             #     cv2.waitKey(300)
-            # self.writer.add_summary(summaries, step)
+            self.writer.add_summary(summaries, step)
 
             if local_step % 20 == 0 or local_step == 1:
                 logger.debug('Anticipator RNN Step %i, Loss: %f' % (step, loss))

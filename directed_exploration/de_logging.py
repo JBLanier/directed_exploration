@@ -3,8 +3,8 @@ from colorlog import ColoredFormatter
 import sys
 import os
 
-STREAM_LOG_FORMAT = "%(asctime)s %(log_color)s%(levelname)-6s%(reset)s | %(log_color)s%(message)s%(reset)s"
-FILE_LOG_FORMAT = "%(asctime)s %(levelname)-6s | %(message)s"
+COLORED_LOG_FORMAT = "%(asctime)s %(log_color)s%(levelname)-6s%(reset)s | %(log_color)s%(message)s%(reset)s"
+LOG_FORMAT = "%(asctime)s %(levelname)-6s | %(message)s"
 
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -40,31 +40,38 @@ def handle_exception(exc_type, exc_value, exc_traceback):
     get_logger().error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
 
 
-def init_logging(logfile=None, redirect_stdout=True, redirect_stderr=True):
+def init_logging(logfile=None, redirect_stdout=True, redirect_stderr=True, handle_tensorflow=True):
     logger = get_logger()
     logger.setLevel(_logging.DEBUG)
-    formatter = ColoredFormatter(STREAM_LOG_FORMAT, DATE_FORMAT)
-    stream_handler = _logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
+
+    add_handlers_to_logger(logger, logfile)
 
     sys.excepthook = handle_exception
 
-    if logfile:
-        log_to_file(logfile)
     if redirect_stdout:
         sys.stdout = LogWriter(logger, log_level=_logging.DEBUG)
     if redirect_stderr:
         sys.stderr = LogWriter(logger, log_level=_logging.ERROR)
+    if handle_tensorflow:
+        add_handlers_to_logger(_logging.getLogger('tensorflow'), logfile)
 
 
-def log_to_file(filename):
+def add_handlers_to_logger(logger, logfile=None):
+    formatter = ColoredFormatter(COLORED_LOG_FORMAT, DATE_FORMAT)
+    stream_handler = _logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    if logfile:
+        log_to_file(logger, logfile)
+
+
+def log_to_file(logger, filename):
     dirname = os.path.dirname(filename)
     if not os.path.exists(dirname):
         os.makedirs(dirname, exist_ok=True)
-    logger = get_logger()
     file_handler = _logging.FileHandler(filename)
-    formatter = _logging.Formatter(FILE_LOG_FORMAT, DATE_FORMAT)
+    formatter = _logging.Formatter(LOG_FORMAT, DATE_FORMAT)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 

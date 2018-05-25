@@ -204,7 +204,7 @@ def get_state_rnn_deque_input_fn(state_rnn_episodes_deque, batch_size, max_episo
                                                                             Tout=[tf.float32, tf.float32,
                                                                                   tf.int32, tf.float32],
                                                                             stateful=False)),
-                           num_parallel_calls=multiprocessing.cpu_count())
+                           num_parallel_calls=1)
 
     def input_fn():
         dataset = tf.data.Dataset.from_generator(generator=episode_generator,
@@ -222,7 +222,7 @@ def get_state_rnn_deque_input_fn(state_rnn_episodes_deque, batch_size, max_episo
         dataset = dataset.shuffle(buffer_size=30)
 
         dataset = dataset.batch(batch_size=batch_size)
-        dataset = dataset.prefetch(buffer_size=5)
+        dataset = dataset.prefetch(buffer_size=10)
 
         iterator = dataset.make_initializable_iterator()
         return iterator.get_next(), iterator.initializer
@@ -258,7 +258,7 @@ def get_anticipator_input_fn(anticipator_deque, batch_size, max_sequence_length,
         dataset = dataset.shuffle(buffer_size=30)
 
         dataset = dataset.batch(batch_size=batch_size)
-        dataset = dataset.prefetch(buffer_size=5)
+        dataset = dataset.prefetch(buffer_size=10)
 
         iterator = dataset.make_initializable_iterator()
         return iterator.get_next(), iterator.initializer
@@ -386,7 +386,8 @@ def convert_state_rnn_deque_to_anticipator_deque(vae, state_rnn, state_rnn_deque
     return episode_sequence_lengths
 
 
-def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, working_dir):
+def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, working_dir, num_episodes_per_environment,
+                             max_episode_length, max_sequence_length):
 
     env = make_boxpush_env(env_id, num_env, seed)
 
@@ -394,12 +395,10 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
     with sess.as_default():
-        anticipator = AnticipatorRNN()
-        vae = VAE(latent_dim=latent_dim, working_dir=os.path.join(working_dir, 'vae'))
-        state_rnn = StateRNN(latent_dim=latent_dim, working_dir=os.path.join(working_dir, 'state_rnn'))
-        num_episodes_per_environment = 3
-        max_episode_length = 2000
-        max_sequence_length = 200
+        summary_writer = tf.summary.FileWriter(working_dir)
+        anticipator = AnticipatorRNN(working_dir=working_dir, summary_writer=summary_writer)
+        vae = VAE(latent_dim=latent_dim, working_dir=working_dir, summary_writer=summary_writer)
+        state_rnn = StateRNN(latent_dim=latent_dim, working_dir=working_dir, summary_writer=summary_writer)
         vae_episodes_deque = deque()
         state_rnn_episodes_deque = deque()
         anticipator_deque = deque()
@@ -413,7 +412,7 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
                                                           max_sequence_length=max_sequence_length, num_epochs=5)
 
         anticipator_input_fn = get_anticipator_input_fn(anticipator_deque=anticipator_deque, batch_size=16,
-                                                        max_sequence_length=max_sequence_length, num_epochs=1)
+                                                        max_sequence_length=max_sequence_length, num_epochs=3)
 
         anticipator_input_fn_iter, anticipator_input_fn_init_op = anticipator_input_fn()
         vae_input_fn_iter, vae_input_fn_init_op = vae_input_fn()
@@ -424,7 +423,7 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
 
         for iteration in range(num_iterations):
             logger.info("_" * 20)
-            logger.info("Iteration {}".format(iteration + 1))
+            logger.info("Iteration {}\n".format(iteration + 1))
             logger.debug("Exploring and generating rollouts...")
             num_ep, num_frames = generate_rollouts_on_anticipator_policy_into_deque(vae_episodes_deque, anticipator,
                                                                                     env, num_env,
@@ -439,8 +438,7 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
             logger.debug("Formatting rollouts for State RNN...")
             episode_sequence_lengths = convert_vae_deque_to_state_rnn_deque(vae, vae_episodes_deque,
                                                                             state_rnn_episodes_deque,
-                                                                            max_sequence_length,
-                                                                            threads=12)
+                                                                            max_sequence_length)
 
             it_num_of_sequences_written = reduce(lambda acc, episode: acc + len(episode), episode_sequence_lengths, 0)
             it_total_frames_written = reduce(lambda acc, episode: acc + sum(episode), episode_sequence_lengths, 0)
@@ -473,6 +471,7 @@ def do_iterative_exploration(env_id, num_env, num_iterations, latent_dim, workin
                 logger.info("Saving...")
                 vae.save_model()
                 state_rnn.save_model()
+                anticipator.save_model()
 
             total_episodes_seen += num_ep
             total_frames_seen += num_frames
