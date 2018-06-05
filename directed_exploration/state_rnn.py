@@ -2,6 +2,7 @@
 import numpy as np
 import tensorflow as tf
 from directed_exploration.model import Model
+from directed_exploration.utils.data_util import convertToOneHot
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class StateRNN(Model):
 
-    def __init__(self, latent_dim=4, action_dim=2, working_dir=None, sess=None, graph=None, summary_writer=None):
+    def __init__(self, latent_dim=4, action_dim=5, working_dir=None, sess=None, graph=None, summary_writer=None):
         logger.info("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
 
         self.latent_dim = latent_dim
@@ -206,7 +207,7 @@ class StateRNN(Model):
         while True:
 
             try:
-                batch_inputs, batch_targets, batch_lengths, batch_frames =iterator_sess.run(iterator)
+                batch_inputs, batch_targets, batch_lengths =iterator_sess.run(iterator)
             except tf.errors.OutOfRangeError:
                 logger.debug("Input_fn ended at step {}".format(local_step))
                 break
@@ -217,6 +218,11 @@ class StateRNN(Model):
                 self.sequence_targets: batch_targets,
                 self.sequence_lengths: batch_lengths
             }
+
+            # print("sequence_inputs: \n{}".format(batch_inputs))
+            # print("above sequence lengths {}".format(batch_lengths))
+            # if 1 in batch_lengths or 2 in batch_lengths or 3 in batch_lengths:
+            #     assert False
 
             _, loss, summaries, step = self.sess.run([self.train_op,
                                                     self.mse_loss,
@@ -232,7 +238,7 @@ class StateRNN(Model):
             if local_step % 20 == 0 or local_step == 1:
                 logger.debug('State RNN Step %i, Loss: %f' % (step, loss))
 
-            if save_every_n_steps and local_step % save_every_n_steps == 0:
+            if save_every_n_steps and step % save_every_n_steps == 0:
                 self.save_model()
 
             if steps and local_step >= steps:
@@ -244,12 +250,38 @@ class StateRNN(Model):
     def reset_state(self):
         self.saved_state = None
 
-    def predict_on_frames_retain_state(self, z_codes, actions):
-        assert z_codes.shape[1] == self.latent_dim
-        assert actions.shape[1] == self.action_dim
+    def selectively_reset_states(self, dones):
+        mask = 1-(np.reshape(dones, newshape=(len(dones), 1)))
+        for cell in self.saved_state:
+            np.multiply(cell.c, mask, out=cell.c)
+            np.multiply(cell.h, mask, out=cell.h)
 
-        feed_dict = {self.sequence_inputs: np.expand_dims(np.concatenate((z_codes, actions), axis=1), 0),
-                     self.sequence_lengths: np.asarray([1])}
+    def predict_on_frames_retain_state(self, z_codes, actions):
+
+        assert z_codes.shape[1] == self.latent_dim
+        actions = convertToOneHot(np.asarray(actions), num_classes=self.action_dim)
+        actions = np.reshape(actions, newshape=(z_codes.shape[0], self.action_dim))
+
+        sequence_inputs = np.expand_dims(np.concatenate((z_codes, actions), axis=1), 1)
+
+        feed_dict = {self.sequence_inputs: sequence_inputs,
+                     self.sequence_lengths: np.ones(sequence_inputs.shape[0])}
+
+        if self.saved_state:
+            feed_dict[self.lstm_state_in] = self.saved_state
+
+        predictions, self.saved_state = self.sess.run([self.output, self.lstm_state_out], feed_dict=feed_dict)
+
+        return predictions[:, 0, :]
+
+    def predict_on_sequences_retain_state(self, z_sequences, action_sequences, sequence_lengths):
+        assert z_sequences.shape[2] == self.latent_dim
+        assert z_sequences.shape[0:2] == action_sequences.shape[0:2]
+
+        # todo: this concatenation may be on wrong axis
+        raise NotImplementedError
+        feed_dict = {self.sequence_inputs: np.concatenate((z_sequences, action_sequences), axis=1),
+                     self.sequence_lengths: np.asarray([sequence_lengths])}
 
         if self.saved_state:
             feed_dict[self.lstm_state_in] = self.saved_state
@@ -260,8 +292,8 @@ class StateRNN(Model):
 
     def predict_on_sequences(self, z_sequences, action_sequences, sequence_lengths):
         assert z_sequences.shape[2] == self.latent_dim
-        assert action_sequences.shape[2] == self.action_dim
         assert z_sequences.shape[0:2] == action_sequences.shape[0:2]
+        assert action_sequences.shape[2] == self.action_dim
 
         feed_dict = {self.sequence_inputs: np.concatenate((z_sequences, action_sequences), axis=2),
                      self.sequence_lengths: sequence_lengths}

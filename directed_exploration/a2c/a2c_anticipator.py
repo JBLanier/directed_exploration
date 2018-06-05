@@ -1,11 +1,12 @@
 import numpy as np
 import tensorflow as tf
-from directed_exploration.model import Model
+from directed_exploration.anticipator import AnticipatorRNN
 import logging
 
 logger = logging.getLogger(__name__)
 
-class AnticipatorRNN(Model):
+
+class A2CAnticipatorRNN(AnticipatorRNN):
 
     def __init__(self, action_dim=2, working_dir=None, sess=None, graph=None, summary_writer=None):
         logger.info("Anticipator, action dim {}".format(action_dim))
@@ -27,7 +28,7 @@ class AnticipatorRNN(Model):
                 # Building the rnn
 
                 self.frame_inputs = tf.placeholder(tf.float32, shape=[None, None, 64, 64, 3], name='frame_inputs')
-                self.action_inputs = tf.placeholder(tf.float32, shape=[None, None, self.action_dim],
+                self.action_inputs = tf.placeholder(tf.float32, shape=[None, None],
                                                     name='action_inputs')
 
                 # self.sequence_inputs = tf.Print(self.sequence_inputs,[self.sequence_inputs, tf.shape(self.sequence_inputs)], "Sequence inputs: ")

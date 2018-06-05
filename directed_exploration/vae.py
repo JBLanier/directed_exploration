@@ -4,6 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 # Function to get *all* dependencies of a tensor.
 def get_dependencies(tensor):
     dependencies = set()
@@ -11,6 +12,7 @@ def get_dependencies(tensor):
     for sub_op in tensor.op.inputs:
         dependencies.update(get_dependencies(sub_op))
     return dependencies
+
 
 class VAE(Model):
 
@@ -244,7 +246,7 @@ class VAE(Model):
             if train_loop_step % 50 == 0 or train_loop_step == 1:
                 logger.debug('VAE Step %i, Loss: %f, KL div: %f, Reconstr: %f' % (step, l, kl, r))
 
-            if save_every_n_steps and train_loop_step % save_every_n_steps == 0:
+            if save_every_n_steps and step % save_every_n_steps == 0:
                 self.save_model()
 
             if steps and train_loop_step >= steps:

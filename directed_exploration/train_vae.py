@@ -1,11 +1,14 @@
 import pygame
 import gym
+import gym_boxpush
 import math
 import numpy as np
 import cv2
 import time
 import multiprocessing
 from directed_exploration.vae import VAE
+from directed_exploration.anticipator import AnticipatorRNN
+from directed_exploration.de_logging import init_logging
 import datetime
 import argparse
 from tkinter import *
@@ -13,6 +16,10 @@ import os
 import re
 import tensorflow as tf
 import pickle
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 MAX_VAE_TF_RECORD_LENGTH = 1000
 
@@ -30,6 +37,25 @@ def save_vae(vae):
     path = 'weights/vae_weights_{date:%Y-%m-%d_%H-%M-%S}.txt'.format(date=datetime.datetime.now())
     print('Saving to {}'.format(path))
     vae.save_model(path)
+
+
+def debug_imshow_image_with_action(frame, action, window_label='frame'):
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    location = (0, 10)
+    font_scale = 0.3
+    font_color = (0, 0, 0)
+    line_type = 1
+
+    frame = np.copy(frame)
+
+    cv2.putText(frame, str(action),
+                location,
+                font,
+                font_scale,
+                font_color,
+                line_type)
+
+    cv2.imshow(window_label, frame[:, :, ::-1])
 
 
 def get_numbered_tfrecord_file_names_from_directory(dir, prefix):
@@ -105,51 +131,41 @@ def train_vae(vae, train_data_dir):
     vae.save_model()
 
 
-def debug_play(vae, env_name):
+def debug_play(vae, env_name, anticipator=None, continous=False):
     env = gym.make(env_name)
     env.reset()
 
-    pygame.init()
-    pygame.joystick.init()
+    action = [0]
+
+    from pyglet.window import key
+
+    def key_press(k, mod):
+        if k == key.RIGHT: action[0] = 1
+        if k == key.UP:    action[0] = 2
+        if k == key.DOWN:  action[0] = 3
+        if k == key.LEFT:  action[0] = 4
+
+    def key_release(k, mod):
+        if k == key.RIGHT and action[0] == 1: action[0] = 0
+        if k == key.UP and action[0] == 2: action[0] = 0
+        if k == key.DOWN and action[0] == 3: action[0] = 0
+        if k == key.LEFT and action[0] == 4: action[0] = 0
+
+    env.viewer.window.on_key_press = key_press
+    env.viewer.window.on_key_release = key_release
 
     while True:
         frame_start_time = time.time()
 
-        for event in pygame.event.get():  # User did something
-            if event.type == pygame.QUIT:  # If user clicked close
-                done = True  # Flag that we are done so we exit this loop
+        frame, _, _, _ = env.step(env.action_space.sample())
 
-            # # Possible joystick actions: JOYAXISMOTION JOYBALLMOTION JOYBUTTONDOWN JOYBUTTONUP JOYHATMOTION
-            # if event.type == pygame.JOYBUTTONDOWN:
-            #     print("Joystick button pressed.")
-            # if event.type == pygame.JOYBUTTONUP:
-            #     print("Joystick button released.")
+        normalized_frame = (frame/255.0)
 
-        joystick = pygame.joystick.Joystick(0)
-        joystick.init()
-        x = joystick.get_axis(0)
-        y = -joystick.get_axis(1)
+        cv2.imshow("orig", frame[:, :, ::-1])
 
-        # print("X,Y: ({},{})".format(x,y))
-        r, phi = cart2pol(x, y)
-
-        if abs(r) < 0.12:
-            r = 0
-        else:
-            r = min(1, r)
-            r = r + 0.12 * math.log(r)
-            r = max(0.0, r)
-
-        phi = phi / math.pi
-
-        frame, _, _, _ = env.step(np.array([r, phi]))
-
-        frame = frame/255.0
-
-        cv2.imshow("encoded_decoded", np.squeeze(vae.encode_decode_frames(np.expand_dims(frame, axis=0)))[:, :, ::-1])
-        cv2.imshow("encoded_decoded2", np.squeeze(vae.decode_frames(vae.encode_frames(np.expand_dims(frame, axis=0))))[:, :, ::-1])
-        cv2.imshow("orig", frame[:,:,::-1])
-
+        cv2.imshow("encoded_decoded", (np.squeeze(vae.encode_decode_frames(np.expand_dims(normalized_frame, axis=0)))[:, :, ::-1]))
+        cv2.imshow("encoded_decoded2", np.squeeze(vae.decode_frames(vae.encode_frames(np.expand_dims(normalized_frame, axis=0))))[:, :, ::-1])
+        env.render()
         cv2.waitKey(1)
 
         # time.sleep((15.4444444 - (time.time() - frame_start_time)) * 0.001)
@@ -196,7 +212,7 @@ def debug_latent_space(vae, env_name):
 def main(args):
     with tf.Session().as_default():
         print("RESTORE FROM DIR: {}".format(args.load_vae_weights))
-        vae = VAE(working_dir=args.load_vae_weights, latent_dim=1)
+        vae = VAE(working_dir='itexplore_20180603174052', latent_dim=1)
         if args.train_vae:
             if args.train_data_dir:
                 train_vae(vae, args.train_data_dir)
@@ -204,7 +220,7 @@ def main(args):
                 print("Must specify --train-data-dir")
                 exit(1)
         if args.debug_play:
-            debug_play(vae, args.env)
+            debug_play(vae, 'boxpushsimple-v0')
 
         if args.debug_latent_space:
             if args.load_vae_weights:
@@ -215,6 +231,8 @@ def main(args):
 
 
 if __name__ == '__main__':
+    init_logging()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--load-vae-weights", help="dir to load VAE weights with",
                         type=str, default=None)

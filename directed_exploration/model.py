@@ -35,11 +35,12 @@ class Model(ABC):
         restore_from_dir = None
         if working_dir:
             self.save_file_path = os.path.join(working_dir, self.save_prefix)
-
             if os.path.exists(os.path.join(self.save_file_path, 'checkpoint')):
+
                 self.save_metagraph = False
                 restore_from_dir = self.save_file_path
             else:
+
                 self.save_metagraph = True
 
             self.identifier = os.path.basename(os.path.normpath(self.save_file_path))

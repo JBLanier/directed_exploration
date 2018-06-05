@@ -7,7 +7,9 @@ import pickle
 import tensorflow as tf
 import multiprocessing
 from directed_exploration.vae import VAE
+from directed_exploration.de_logging import init_logging
 import gym
+import gym_boxpush
 import cv2
 
 MAX_SEQUENCES_PER_RNN_TF_RECORD = 5
@@ -136,22 +138,21 @@ def debug_play(rnn, vae):
     frame = env.reset()
     rnn.reset_state()
 
-    action = np.array([0.0, 0.0])
+    action = [0]
 
     from pyglet.window import key
 
     def key_press(k, mod):
-        if k == key.LEFT:  action[:] = [1, -1]
-        # if k == key.LEFT:  action[:] = random.sample([[1, 1], [1, -1]], 1)[0]
-        if k == key.RIGHT: action[:] = [1, 0]
-        if k == key.UP:    action[:] = [1, 0.5]
-        if k == key.DOWN:  action[:] = [1, -0.5]
+        if k == key.RIGHT: action[0] = 1
+        if k == key.UP:    action[0] = 2
+        if k == key.DOWN:  action[0] = 3
+        if k == key.LEFT:  action[0] = 4
 
     def key_release(k, mod):
-        if k == key.LEFT and (action[1] == 1 or action[1] == -1): action[:] = [0, 0]
-        if k == key.RIGHT and np.all(action == [1, 0]):           action[:] = [0, 0]
-        if k == key.UP and action[1] == 0.5:                      action[:] = [0, 0]
-        if k == key.DOWN and action[1] == -0.5:                   action[:] = [0, 0]
+        if k == key.RIGHT and action[0] == 1: action[0] = 0
+        if k == key.UP and action[0] == 2: action[0] = 0
+        if k == key.DOWN and action[0] == 3: action[0] = 0
+        if k == key.LEFT and action[0] == 4: action[0] = 0
 
     env.viewer.window.on_key_press = key_press
     env.viewer.window.on_key_release = key_release
@@ -159,14 +160,14 @@ def debug_play(rnn, vae):
     prediction = rnn.predict_on_frames_retain_state(vae.encode_frames(np.expand_dims(frame, 0)), np.expand_dims(action, 0))
 
     while True:
-        frame, _, _, _ = env.step(action)
+        frame, _, _, _ = env.step(action[0])
         env.render()
 
         frame = frame / 255.0
         cv2.imshow("encoded_decoded", np.squeeze(vae.encode_decode_frames(np.expand_dims(frame, axis=0)))[:, :, ::-1])
-        cv2.imshow("predicted_decoded", np.squeeze(vae.decode_frames(prediction[:, 0, ...]))[:, :, ::-1])
-        prediction = rnn.predict_on_frames_retain_state(prediction[:, 0, ...], np.expand_dims(action, 0))
-        cv2.imshow("orig", frame[:, :, ::-1])
+        cv2.imshow("predicted_decoded", np.squeeze(vae.decode_frames(np.expand_dims(prediction[:, 0, ...], 0)))[:, :, ::-1])
+        prediction = rnn.predict_on_frames_retain_state(np.expand_dims(prediction[:, 0, ...],0), np.expand_dims(action, 0))
+        debug_imshow_image_with_action(window_label='orig',frame=frame, action=action)
 
         cv2.waitKey(1)
 
@@ -193,7 +194,7 @@ def debug_play_box_simple_no_vae(rnn):
     env.viewer.window.on_key_release = key_release
 
     while True:
-        env.render()
+        env.render_actual_frames()
         predicted_frame = env.debug_show_player_at_location(np.expand_dims(np.squeeze(prediction), 0))
 
         debug_imshow_image_with_action(actual_frame, action, window_label='actual frame')
@@ -349,6 +350,8 @@ def main(args):
 
 
 if __name__ == '__main__':
+    init_logging()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--load-rnn-weights", help="dir to load RNN weights with",
                         type=str, default=None)
