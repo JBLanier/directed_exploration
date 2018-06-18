@@ -261,9 +261,13 @@ class VAE(Model):
     def decode_frames(self, z_codes):
         return self.sess.run(self.decoded, feed_dict={self.z_encoded: z_codes})
 
-    def get_loss_for_decoded_frames(self, z_codes, target_frames):
-        return self.sess.run(self.per_frame_reconstruction_loss, feed_dict={self.z_encoded: z_codes,
-                                                                            self.x: target_frames})
+    def get_loss_for_decoded_frames(self, z_codes, target_frames, return_generated_frames=False):
+        if not return_generated_frames:
+            return self.sess.run(self.per_frame_reconstruction_loss, feed_dict={self.z_encoded: z_codes,
+                                                                                self.x: target_frames})
+        else:
+            return self.sess.run([self.per_frame_reconstruction_loss, self.decoded], feed_dict={self.z_encoded: z_codes,
+                                                                                self.x: target_frames})
 
     def encode_decode_frames(self, float_frames):
         return self.sess.run(self.decoded, feed_dict={self.x: float_frames})

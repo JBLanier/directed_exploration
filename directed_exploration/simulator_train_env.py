@@ -21,10 +21,12 @@ HEATMAP_FOLDER_NAME = 'heatmap_records'
 class SimulatorTrainEnv:
 
     def __init__(self, working_dir, sess, latent_dim, max_train_seq_length, sequences_per_epoch, env_id, num_env,
-                 heatmaps=False, validation_data_dir=None):
+                 heatmaps=False, validation_data_dir=None, return_generated_frames_in_info=False, do_train=True):
 
         self.working_dir = working_dir
         self.validation_data_dir = validation_data_dir
+        self.return_generated_frames_in_info = return_generated_frames_in_info
+        self.do_train = do_train
         self.sess = sess
         self.max_train_seq_length = max_train_seq_length
         self.sequences_per_epoch = sequences_per_epoch
@@ -68,7 +70,11 @@ class SimulatorTrainEnv:
         new_obs, _, dones, _ = self.subproc_env.step(actions)
         encoded_obs = self.vae.encode_frames(self.current_obs)
         predicted_encodings = self.state_rnn.predict_on_frames_retain_state(z_codes=encoded_obs, actions=actions)
-        losses = self.vae.get_loss_for_decoded_frames(z_codes=predicted_encodings, target_frames=new_obs/255.0)
+        generated_frames = None
+        if self.return_generated_frames_in_info:
+            losses, generated_frames = self.vae.get_loss_for_decoded_frames(z_codes=predicted_encodings, target_frames=new_obs/255.0, return_generated_frames=True)
+        else:
+            losses = self.vae.get_loss_for_decoded_frames(z_codes=predicted_encodings, target_frames=new_obs/255.0)
         self.state_rnn.selectively_reset_states(dones)
 
         # save frames and actions for training
@@ -87,7 +93,7 @@ class SimulatorTrainEnv:
 
                 # add sequence to train deque
                 self.vae_deque.append((self.current_sequence_frames[env_index], self.current_sequence_actions[env_index]))
-                if len(self.vae_deque) >= self.sequences_per_epoch:
+                if len(self.vae_deque) >= self.sequences_per_epoch and self.do_train:
                     logger.info("Simulator Train Iteration {}".format(self.current_train_iteration))
 
                     self.train()
@@ -114,7 +120,7 @@ class SimulatorTrainEnv:
                 self.current_sequence_lengths[env_index] = 0
 
         self.current_obs = new_obs / 255.0
-        return new_obs, losses, dones, {}
+        return new_obs, losses, dones, {'generated_frames': generated_frames}
 
     def reset(self):
         obs = self.subproc_env.reset()
