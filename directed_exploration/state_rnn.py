@@ -51,7 +51,7 @@ def lstm(xs, ms, s, scope, nh, init_scale=1.0):
     return xs, s
 
 
-def mask_non_zero_count(mask):
+def mask_non_zero_counts(mask):
     with tf.name_scope('mask_non_zero_count'):
         used = tf.sign(tf.abs(mask))
         length = tf.reduce_sum(used, 1)
@@ -97,7 +97,8 @@ class StateRNN(Model):
                 lstm_output, self.states_out = lstm(xs=self.sequence_inputs,
                                                     ms=self.state_reset_before_prediction_mask,
                                                     s=self.states_in,
-                                                    nh=lstm_size)
+                                                    nh=lstm_size,
+                                                    scope='lstm1')
 
                 lstm_output_for_dense = tf.reshape(lstm_output,
                                                    shape=[batch_size * sequence_length, lstm_output.shape[-1]])
@@ -128,12 +129,12 @@ class StateRNN(Model):
                                                                                     [batch_size, sequence_length])
 
                     valid_example_mask = self.state_reset_between_input_and_target_mask
-                    valid_example_count = mask_non_zero_count(valid_example_mask)
+                    valid_example_counts = mask_non_zero_counts(valid_example_mask)
 
                     frame_squared_errors = tf.square(self.output - self.sequence_targets)
                     frame_mean_squared_errors = tf.reduce_mean(frame_squared_errors, axis=2)
-                    masked_frame_mean_sqaured_erros = frame_mean_squared_errors * valid_example_mask
-                    mse_over_sequences = tf.reduce_sum(masked_frame_mean_sqaured_erros, 1) / valid_example_count
+                    masked_frame_mean_squared_erros = frame_mean_squared_errors * valid_example_mask
+                    mse_over_sequences = tf.reduce_sum(masked_frame_mean_squared_erros, 1) / valid_example_counts
                     mse_over_batch = tf.reduce_mean(mse_over_sequences)
                     self.mse_loss = mse_over_batch
                     tf.summary.scalar('mse_loss', self.mse_loss)
