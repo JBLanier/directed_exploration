@@ -51,6 +51,12 @@ def lstm(xs, ms, s, scope, nh, init_scale=1.0):
     return xs, s
 
 
+def mask_non_zero_count(mask):
+    with tf.name_scope('mask_non_zero_count'):
+        used = tf.sign(tf.abs(mask))
+        length = tf.reduce_sum(used, 1)
+        return length
+
 class StateRNN(Model):
     def __init__(self, latent_dim=4, action_dim=5, working_dir=None, sess=None, graph=None, summary_writer=None):
         logger.info("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
@@ -82,13 +88,14 @@ class StateRNN(Model):
 
                 lstm_size = 256
 
-                self.states_mask = tf.placeholder(tf.float32, [batch_size, sequence_length])  # mask (done t-1)
+                # mask (done at time t-1)
+                self.state_reset_before_prediction_mask = tf.placeholder(tf.float32, [batch_size, sequence_length])
 
                 zero_states = tf.zeros(shape=[batch_size, lstm_size * 2], dtype=tf.float32)
                 self.states_in = tf.placeholder_with_default(zero_states, shape=[batch_size, lstm_size * 2])
 
                 lstm_output, self.states_out = lstm(xs=self.sequence_inputs,
-                                                    ms=self.states_mask,
+                                                    ms=self.state_reset_before_prediction_mask,
                                                     s=self.states_in,
                                                     nh=lstm_size)
 
@@ -115,9 +122,18 @@ class StateRNN(Model):
 
                 with tf.name_scope('mse_loss'):
                     # Compute Squared Error for each frame
+
+                    # mask (done at time t)
+                    self.state_reset_between_input_and_target_mask = tf.placeholder(tf.float32,
+                                                                                    [batch_size, sequence_length])
+
+                    valid_example_mask = self.state_reset_between_input_and_target_mask
+                    valid_example_count = mask_non_zero_count(valid_example_mask)
+
                     frame_squared_errors = tf.square(self.output - self.sequence_targets)
                     frame_mean_squared_errors = tf.reduce_mean(frame_squared_errors, axis=2)
-                    mse_over_sequences = tf.reduce_sum(frame_mean_squared_errors, 1)
+                    masked_frame_mean_sqaured_erros = frame_mean_squared_errors * valid_example_mask
+                    mse_over_sequences = tf.reduce_sum(masked_frame_mean_sqaured_erros, 1) / valid_example_count
                     mse_over_batch = tf.reduce_mean(mse_over_sequences)
                     self.mse_loss = mse_over_batch
                     tf.summary.scalar('mse_loss', self.mse_loss)
@@ -157,7 +173,7 @@ class StateRNN(Model):
         feed_dict = {
             self.sequence_inputs: input_sequence_batch,
             self.sequence_targets: target_sequence_batch,
-            self.states_mask: states_mask_sequence_batch
+            self.mask: states_mask_sequence_batch
         }
 
         if states_batch:
@@ -303,7 +319,7 @@ class StateRNN(Model):
         sequence_inputs = np.expand_dims(np.concatenate((z_codes, actions), axis=1), 1)
 
         feed_dict = {self.sequence_inputs: sequence_inputs,
-                     self.states_mask: states_mask
+                     self.mask: states_mask
                      }
 
         if self.saved_state:
