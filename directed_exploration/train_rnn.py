@@ -134,7 +134,7 @@ def train_state_rnn(rnn, train_data_dir):
 
 
 def debug_play(rnn, vae):
-    env = gym.make('boxpushsimple-v0')
+    env = gym.make('boxpushmaze-v0')
     frame = env.reset()
     rnn.reset_state()
 
@@ -165,8 +165,9 @@ def debug_play(rnn, vae):
 
         frame = frame / 255.0
         cv2.imshow("encoded_decoded", np.squeeze(vae.encode_decode_frames(np.expand_dims(frame, axis=0)))[:, :, ::-1])
-        cv2.imshow("predicted_decoded", np.squeeze(vae.decode_frames(np.expand_dims(prediction[:, 0, ...], 0)))[:, :, ::-1])
-        prediction = rnn.predict_on_frames_retain_state(np.expand_dims(prediction[:, 0, ...],0), np.expand_dims(action, 0))
+        cv2.imshow("predicted_decoded", np.squeeze(vae.decode_frames(prediction[:, :]))[:, :, ::-1])
+        prediction = rnn.predict_on_frames_retain_state(prediction[:, :], np.expand_dims(action, 0))
+
         debug_imshow_image_with_action(window_label='orig',frame=frame, action=action)
 
         cv2.waitKey(1)
@@ -315,7 +316,7 @@ def main(args):
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
     with sess.as_default():
-        state_rnn = StateRNN(working_dir=args.load_rnn_weights, latent_dim=1)
+        state_rnn = StateRNN(working_dir=args.load_rnn_weights, latent_dim=16)
 
         if args.train_rnn:
             if args.train_data_dir:
