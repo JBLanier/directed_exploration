@@ -11,7 +11,8 @@ import cv2
 
 if __name__ == '__main__':
 
-    working_dir = 'itexplore_a2c_second_run'
+    # working_dir = '/home/jb/git/directed_exploration/itexplore_20180618222419'
+    working_dir = '/home/jb/git/directed_exploration/itexplore_only_vae'
 
     if working_dir:
         root_save_dir = working_dir
@@ -32,9 +33,9 @@ if __name__ == '__main__':
 
     sim = SimulatorTrainEnv(env_id='boxpushmaze-v0',
                             num_env=num_env,
-                            latent_dim=4,
+                            latent_dim=16,
                             working_dir=root_save_dir,
-                            max_train_seq_length=100,
+                            train_seq_length=50,
                             sequences_per_epoch=num_env*5,
                             validation_data_dir='/media/jb/m2/boxpushmaze_validation_rollouts/',
                             heatmaps=True,
@@ -47,7 +48,7 @@ if __name__ == '__main__':
     from baselines.a2c.a2c import learn
     from baselines.ppo2.policies import LstmPolicy
 
-    learn(policy=LstmPolicy, env=sim, seed=42, total_timesteps=int(int(10e6) * 1.1), lrschedule='constant')
+    learn(policy=LstmPolicy, env=sim, seed=42, total_timesteps=int(int(10e6) * 1.1), lrschedule='constant', ent_coef=0.4)
 
 
     '''

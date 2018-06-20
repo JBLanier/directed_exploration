@@ -136,7 +136,7 @@ def train_state_rnn(rnn, train_data_dir):
 def debug_play(rnn, vae):
     env = gym.make('boxpushmaze-v0')
     frame = env.reset()
-    rnn.reset_state()
+    rnn.reset_saved_state()
 
     action = [0]
 
@@ -164,7 +164,7 @@ def debug_play(rnn, vae):
         env.render()
 
         frame = frame / 255.0
-        cv2.imshow("encoded_decoded", np.squeeze(vae.encode_decode_frames(np.expand_dims(frame, axis=0)))[:, :, ::-1])
+        cv2.imshow("encoded_decoded", np.squeeze(vae.encode_then_decode_frames(np.expand_dims(frame, axis=0)))[:, :, ::-1])
         cv2.imshow("predicted_decoded", np.squeeze(vae.decode_frames(prediction[:, :]))[:, :, ::-1])
         prediction = rnn.predict_on_frames_retain_state(prediction[:, :], np.expand_dims(action, 0))
 
@@ -177,7 +177,7 @@ def debug_play_box_simple_no_vae(rnn):
     env = gym.make('boxpushsimple-v0')
     actual_frame = env.reset()
     prediction = np.reshape(env.debug_get_player_location(), [1, rnn.latent_dim])
-    rnn.reset_state()
+    rnn.reset_saved_state()
 
     action = np.array([0.0, 0.0])
 

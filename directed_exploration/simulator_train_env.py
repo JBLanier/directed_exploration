@@ -18,9 +18,10 @@ logger = logging.getLogger(__name__)
 
 HEATMAP_FOLDER_NAME = 'heatmap_records'
 
+
 class SimulatorTrainEnv:
 
-    def __init__(self, working_dir, sess, latent_dim, max_train_seq_length, sequences_per_epoch, env_id, num_env,
+    def __init__(self, working_dir, sess, latent_dim, train_seq_length, sequences_per_epoch, env_id, num_env,
                  heatmaps=False, validation_data_dir=None, return_generated_frames_in_info=False, do_train=True):
 
         self.working_dir = working_dir
@@ -28,7 +29,7 @@ class SimulatorTrainEnv:
         self.return_generated_frames_in_info = return_generated_frames_in_info
         self.do_train = do_train
         self.sess = sess
-        self.max_train_seq_length = max_train_seq_length
+        self.train_seq_length = train_seq_length
         self.sequences_per_epoch = sequences_per_epoch
         self.heatmaps = heatmaps
         self.current_obs = None
@@ -45,26 +46,18 @@ class SimulatorTrainEnv:
             self.set_heatmap_record_write_to_current_iteration()
             self.old_prefix = self.get_current_heatmap_record_prefix()
 
-        self.current_sequence_frames = [np.empty(shape=(self.max_train_seq_length, 64, 64, 3), dtype=np.float32) for _ in range(num_env)]
-        self.current_sequence_actions = [np.empty(shape=(self.max_train_seq_length, self.action_space.n), dtype=np.float32) for _ in range(num_env)]
-        self.current_sequence_lengths = np.zeros(shape=num_env, dtype=np.uint32)
+        self.current_sequence_frames = np.empty(shape=(self.num_envs, self.train_seq_length, 64, 64, 3),
+                                                dtype=np.float32)
+        self.current_sequence_actions = np.empty(shape=(self.num_envs, self.train_seq_length, self.action_space.n),
+                                                 dtype=np.float32)
 
-        with sess.as_default():
+        with self.sess.as_default():
             self.summary_writer = tf.summary.FileWriter(working_dir)
             self.vae = VAE(latent_dim=latent_dim, working_dir=working_dir, summary_writer=self.summary_writer)
             self.state_rnn = StateRNN(latent_dim=latent_dim, action_dim=self.subproc_env.action_space.n,
                                       working_dir=working_dir, summary_writer=self.summary_writer)
 
-            vae_input_fn = sdo.get_vae_deque_input_fn(train_deque=self.vae_deque, batch_size=256)
-
-            state_rnn_input_fn = sdo.get_state_rnn_deque_input_fn(state_rnn_episodes_deque=self.state_rnn_deque,
-                                                                  batch_size=64,
-                                                                  latent_dim=latent_dim, num_actions=self.subproc_env.action_space.n,
-                                                                  max_sequence_length=max_train_seq_length, num_epochs=1)
-
-            with tf.variable_scope('input_functions'):
-                self.vae_input_fn_iter, self.vae_input_fn_init_op = vae_input_fn()
-                self.state_rnn_input_fn_iter, self.state_rnn_input_fn_init_op = state_rnn_input_fn()
+        self.reset()
 
     def step(self, actions):
         new_obs, _, dones, _ = self.subproc_env.step(actions)
@@ -75,7 +68,7 @@ class SimulatorTrainEnv:
             losses, generated_frames = self.vae.get_loss_for_decoded_frames(z_codes=predicted_encodings, target_frames=new_obs/255.0, return_generated_frames=True)
         else:
             losses = self.vae.get_loss_for_decoded_frames(z_codes=predicted_encodings, target_frames=new_obs/255.0)
-        self.state_rnn.selectively_reset_states(dones)
+        self.state_rnn.selectively_reset_saved_states(dones)
 
         # save frames and actions for training
         for env_index in range(self.subproc_env.num_envs):
@@ -85,7 +78,7 @@ class SimulatorTrainEnv:
 
             self.current_sequence_lengths[env_index] += 1
 
-            if dones[env_index] or self.current_sequence_lengths[env_index] >= self.max_train_seq_length:
+            if dones[env_index] or self.current_sequence_lengths[env_index] >= self.train_seq_length:
 
                 # trim env sequence to actual length
                 self.current_sequence_frames[env_index].resize((self.current_sequence_lengths[env_index], 64, 64, 3))
@@ -115,17 +108,19 @@ class SimulatorTrainEnv:
                         self.current_train_iteration += 1
 
                 # reset sequence for env
-                self.current_sequence_frames[env_index] = np.empty(shape=(self.max_train_seq_length, 64, 64, 3), dtype=np.float32)
-                self.current_sequence_actions[env_index] = np.empty(shape=(self.max_train_seq_length, self.action_space.n), dtype=np.float32)
+                self.current_sequence_frames[env_index] = np.empty(shape=(self.train_seq_length, 64, 64, 3), dtype=np.float32)
+                self.current_sequence_actions[env_index] = np.empty(shape=(self.train_seq_length, self.action_space.n), dtype=np.float32)
                 self.current_sequence_lengths[env_index] = 0
 
         self.current_obs = new_obs / 255.0
         return new_obs, losses, dones, {'generated_frames': generated_frames}
 
     def reset(self):
+        self.state_rnn.reset_saved_state()
         obs = self.subproc_env.reset()
         self.current_obs = obs / 255.0
-        self.state_rnn.reset_state()
+        self.train_states = None
+        self.dones = [False for _ in range(self.num_envs)]
         return obs
 
     def render_actual_frames(self):
@@ -148,8 +143,8 @@ class SimulatorTrainEnv:
 
         logger.debug("Formatting rollouts for State RNN...")
         sdo.convert_vae_deque_to_state_rnn_deque(self.vae, self.vae_deque,
-                                                                            self.state_rnn_deque,
-                                                                            self.max_train_seq_length)
+                                                 self.state_rnn_deque,
+                                                 self.train_seq_length)
 
         # it_num_of_sequences_written = reduce(lambda acc, episode: acc + len(episode), episode_sequence_lengths, 0)
         # it_total_frames_written = reduce(lambda acc, episode: acc + sum(episode), episode_sequence_lengths, 0)
