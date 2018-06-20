@@ -28,7 +28,6 @@ def ortho_init(scale=1.0):
 
 def lstm(xs, ms, s, scope, nh, init_scale=1.0):
     nbatch, nin = [v.value for v in xs[0].get_shape()]
-    nsteps = len(xs)
     with tf.variable_scope(scope):
         wx = tf.get_variable("wx", [nin, nh * 4], initializer=ortho_init(init_scale))
         wh = tf.get_variable("wh", [nh, nh * 4], initializer=ortho_init(init_scale))
@@ -89,10 +88,10 @@ class StateRNN(Model):
                 lstm_size = 256
 
                 # mask (done at time t-1)
-                self.state_reset_before_prediction_mask = tf.placeholder(tf.float32, [batch_size, sequence_length])
+                self.state_reset_before_prediction_mask = tf.placeholder(tf.float32, [None, None])
 
                 zero_states = tf.zeros(shape=[batch_size, lstm_size * 2], dtype=tf.float32)
-                self.states_in = tf.placeholder_with_default(zero_states, shape=[batch_size, lstm_size * 2])
+                self.states_in = tf.placeholder_with_default(zero_states, shape=[None, lstm_size * 2])
 
                 lstm_output, self.states_out = lstm(xs=self.sequence_inputs,
                                                     ms=self.state_reset_before_prediction_mask,
@@ -126,7 +125,7 @@ class StateRNN(Model):
 
                     # mask (done at time t)
                     self.state_reset_between_input_and_target_mask = tf.placeholder(tf.float32,
-                                                                                    [batch_size, sequence_length])
+                                                                                    [None, None])
 
                     valid_example_mask = self.state_reset_between_input_and_target_mask
                     valid_example_counts = mask_non_zero_counts(valid_example_mask)
@@ -165,16 +164,21 @@ class StateRNN(Model):
 
         self.writer.add_graph(self.graph)
 
-    def train_on_batch(self, input_sequence_batch, target_sequence_batch, states_mask_sequence_batch, states_batch=None):
+    def train_on_batch(self, input_sequence_batch, target_sequence_batch, states_mask_sequence_batch,
+                       states_batch=None):
+
+        sequence_length = input_sequence_batch.shape[1]
 
         assert np.array_equal(input_sequence_batch.shape[:-1], target_sequence_batch.shape[:-1])
         assert np.array_equal(input_sequence_batch.shape[:-1], states_mask_sequence_batch.shape)
         assert np.array_equal(input_sequence_batch.shape[0], states_batch.shape[0])
+        assert states_batch.shape[1] == sequence_length + 1
 
         feed_dict = {
             self.sequence_inputs: input_sequence_batch,
             self.sequence_targets: target_sequence_batch,
-            self.mask: states_mask_sequence_batch
+            self.state_reset_before_prediction_mask: states_mask_sequence_batch[:, :-1],
+            self.state_reset_between_input_and_target_mask:  states_mask_sequence_batch[:, 1:]
         }
 
         if states_batch:

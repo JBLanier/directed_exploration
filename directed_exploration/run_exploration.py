@@ -35,7 +35,7 @@ if __name__ == '__main__':
                             num_env=num_env,
                             latent_dim=16,
                             working_dir=root_save_dir,
-                            train_seq_length=50,
+                            train_seq_length=5,
                             sequences_per_epoch=num_env*5,
                             validation_data_dir='/media/jb/m2/boxpushmaze_validation_rollouts/',
                             heatmaps=True,

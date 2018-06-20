@@ -32,18 +32,20 @@ class SimulatorTrainEnv:
         self.train_seq_length = train_seq_length
         self.sequences_per_epoch = sequences_per_epoch
         self.heatmaps = heatmaps
+        self.num_envs=num_env
+
+        self.subproc_env = make_record_write_subproc_env(env_id=env_id, num_env=num_env)
+        self.action_space = self.subproc_env.action_space
+        self.observation_space = self.subproc_env.observation_space
 
         self.t_minus_1_dones = [True for _ in range(self.num_envs)]
 
         self.t_obs = self.subproc_env.reset() / 255.0
         self.t_dones = [False for _ in range(self.num_envs)]
 
-        self.current_train_iteration = 0
-        self.num_envs=num_env
+        self.train_states = None
 
-        self.subproc_env = make_record_write_subproc_env(env_id=env_id, num_env=num_env)
-        self.action_space = self.subproc_env.action_space
-        self.observation_space = self.subproc_env.observation_space
+        self.current_train_iteration = 0
 
         if heatmaps:
             self.set_heatmap_record_write_to_current_iteration()
@@ -70,7 +72,7 @@ class SimulatorTrainEnv:
         generated_frames = None
         if self.return_generated_frames_in_info:
             losses, generated_frames = self.vae.get_loss_for_decoded_frames(z_codes=prediction_from_current_obs,
-                                                                            target_frames=t_plus_1_obs/255.0,
+                                                                            target_frames=t_plus_1_obs,
                                                                             return_generated_frames=True)
         else:
             losses = self.vae.get_loss_for_decoded_frames(z_codes=prediction_from_current_obs,
@@ -118,44 +120,31 @@ class SimulatorTrainEnv:
                                           prefix=self.get_current_heatmap_record_prefix())
 
     def train(self):
-        # for i, s in enumerate(self.vae_deque):
-        #     print("vae_deque element {}:\n{}".format(i, s[1]))
 
-        logger.debug("Training VAE on rollouts...")
-        self.sess.run(self.vae_input_fn_init_op)
-        self.vae.train_on_iterator(self.vae_input_fn_iter)
+        assert len(self.minibatch_observations) == len(self.minibatch_actions + 1)
+        assert len(self.minibatch_observations) == len(self.minibatch_dones)
+        assert len(self.minibatch_actions) == self.train_seq_length
 
-        logger.debug("Formatting rollouts for State RNN...")
-        sdo.convert_vae_deque_to_state_rnn_deque(self.vae, self.vae_deque,
-                                                 self.state_rnn_deque,
-                                                 self.train_seq_length)
+        self.minibatch_observations = np.asarray(self.minibatch_observations).swapaxes(1, 0)
+        self.minibatch_actions = np.asarray(self.minibatch_actions).swapaxes(1, 0)
+        self.minibatch_dones = np.asarray(self.minibatch_dones).swapaxes(1, 0)
 
-        # it_num_of_sequences_written = reduce(lambda acc, episode: acc + len(episode), episode_sequence_lengths, 0)
-        # it_total_frames_written = reduce(lambda acc, episode: acc + sum(episode), episode_sequence_lengths, 0)
+        assert self.minibatch_observations.shape[0] == self.num_envs
+        assert self.minibatch_dones.shape[0] == self.num_envs
+        assert self.minibatch_actions.shape[0] == self.num_envs
 
-        # logger.debug("Converted {} episodes to {} sequences ({} frames).".format(len(episode_sequence_lengths),
-        #                                                                          it_num_of_sequences_written,
-        #                                                                          it_total_frames_written))
+        mask = 1 - self.minibatch_dones
 
-        logger.debug("Training State RNN on rollouts...")
-        self.sess.run(self.state_rnn_input_fn_init_op)
-        self.state_rnn.train_on_iterator(self.state_rnn_input_fn_iter)
+        vae_loss, kl_divergence, reconstruction_loss, vae_step = self.vae.train_on_batch(
+            frames_batch=self.minibatch_observations)
 
-        self.vae_deque.clear()
-        self.state_rnn_deque.clear()
+        rnn_loss, states_out, rnn_step = self.state_rnn.train_on_batch(
+            input_sequence_batch=self.minibatch_observations[:, :-1],
+            target_sequence_batch=self.minibatch_observations[:, 1:],
+            states_mask_sequence_batch=mask,
+            states_batch=self.train_states)
 
-        if self.current_train_iteration == 0 or self.current_train_iteration % 50 == 0:
+        logger.debug("VAE step {} loss {} - RNN step {} loss {}".format(vae_step, vae_loss, rnn_step, rnn_loss))
 
-            if self.validation_data_dir:
-                logger.debug("Validating simulator on trajectories from {}".format(self.validation_data_dir))
-                validation_loss = validate_vae_state_rnn_pair_on_tf_records(data_dir=self.validation_data_dir,
-                                                                            vae=self.vae, state_rnn=self.state_rnn,
-                                                                            sess=self.sess,
-                                                                            allowed_action_space=self.action_space)
-                logger.debug('Total Validation Loss = {}'.format(validation_loss))
-                val_loss_summary = tf.Summary(value=[tf.Summary.Value(tag='simulator_val_loss',
-                                                                      simple_value=validation_loss)])
-                self.summary_writer.add_summary(val_loss_summary, global_step=self.current_train_iteration)
+        self.train_states = states_out
 
-            self.vae.save_model()
-            self.state_rnn.save_model()
