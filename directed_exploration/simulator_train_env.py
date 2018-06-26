@@ -1,4 +1,4 @@
-from directed_exploration.utils.env_util import make_record_write_subproc_env
+from directed_exploration.utils.env_util import make_record_write_subproc_env, make_subproc_env
 from directed_exploration import simulator_data_ops as sdo
 from directed_exploration.vae import VAE
 from directed_exploration.state_rnn import StateRNN
@@ -10,6 +10,8 @@ from collections import deque
 import tensorflow as tf
 import numpy as np
 import os
+import gym
+import cv2
 from functools import reduce
 
 import logging
@@ -18,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 HEATMAP_FOLDER_NAME = 'heatmap_records'
 
+
+def convert_to_one_hot(Y, C):
+    Y = np.eye(C)[Y.reshape(-1)]
+    return Y
 
 class SimulatorTrainEnv:
 
@@ -32,11 +38,17 @@ class SimulatorTrainEnv:
         self.train_seq_length = train_seq_length
         self.sequences_per_epoch = sequences_per_epoch
         self.heatmaps = heatmaps
-        self.num_envs=num_env
+        self.num_envs = num_env
 
-        self.subproc_env = make_record_write_subproc_env(env_id=env_id, num_env=num_env)
+        if heatmaps:
+            self.subproc_env = make_record_write_subproc_env(env_id=env_id, num_env=num_env)
+        else:
+            self.subproc_env = make_subproc_env(env_id=env_id, num_env=num_env, width=64, height=64)
+
         self.action_space = self.subproc_env.action_space
         self.observation_space = self.subproc_env.observation_space
+
+        self.loss_accumulators = {'rnn': 0, 'vae': 0}
 
         self.t_minus_1_dones = [True for _ in range(self.num_envs)]
 
@@ -47,9 +59,9 @@ class SimulatorTrainEnv:
 
         self.current_train_iteration = 0
 
-        if heatmaps:
-            self.set_heatmap_record_write_to_current_iteration()
-            self.old_prefix = self.get_current_heatmap_record_prefix()
+        # if heatmaps:
+        #     self.set_heatmap_record_write_to_current_iteration()
+        #     self.old_prefix = self.get_current_heatmap_record_prefix()
 
         self.minibatch_observations = []
         self.minibatch_actions = []
@@ -58,7 +70,7 @@ class SimulatorTrainEnv:
         with self.sess.as_default():
             self.summary_writer = tf.summary.FileWriter(working_dir)
             self.vae = VAE(latent_dim=latent_dim, working_dir=working_dir, summary_writer=self.summary_writer)
-            self.state_rnn = StateRNN(latent_dim=latent_dim, action_dim=self.subproc_env.action_space.n,
+            self.state_rnn = StateRNN(train_sequence_length=train_seq_length, latent_dim=latent_dim, action_dim=self.subproc_env.action_space.n,
                                       working_dir=working_dir, summary_writer=self.summary_writer)
 
     def step(self, actions):
@@ -68,7 +80,7 @@ class SimulatorTrainEnv:
         encoded_current_obs = self.vae.encode_frames(self.t_obs)
         prediction_from_current_obs = self.state_rnn.predict_on_frames_retain_state(z_codes=encoded_current_obs,
                                                                                     actions=actions,
-                                                                                    states_mask=self.t_minus_1_dones)
+                                                                                    states_mask=1 - np.asarray(self.t_minus_1_dones))
         generated_frames = None
         if self.return_generated_frames_in_info:
             losses, generated_frames = self.vae.get_loss_for_decoded_frames(z_codes=prediction_from_current_obs,
@@ -79,14 +91,15 @@ class SimulatorTrainEnv:
                                                           target_frames=t_plus_1_obs)
 
         self.minibatch_observations.append(self.t_obs)
-        self.minibatch_actions.append(actions)
+        self.minibatch_actions.append(convert_to_one_hot(actions, self.action_space.n))
         self.minibatch_dones.append(self.t_minus_1_dones)
 
-        if len(actions) > self.train_seq_length:
+        if len(self.minibatch_actions) >= self.train_seq_length:
             self.minibatch_observations.append(t_plus_1_obs)
             self.minibatch_dones.append(self.t_dones)
 
-            self.train()
+            if self.do_train:
+                self.train()
 
             self.minibatch_observations = []
             self.minibatch_actions = []
@@ -100,14 +113,21 @@ class SimulatorTrainEnv:
         return t_plus_1_obs, losses, t_plus_1_dones, {'generated_frames': generated_frames}
 
     def reset(self):
-        print("reset shouldn't ever need to be called")
-        raise NotImplementedError
-        # self.state_rnn.reset_saved_state()
-        # obs = self.subproc_env.reset()
-        # self.current_obs = obs / 255.0
-        # self.train_states = None
-        # self.dones = [False for _ in range(self.num_envs)]
-        # return obs
+        logger.info("RESET WAS CALLED")
+        self.state_rnn.reset_saved_state()
+
+        self.t_minus_1_dones = [True for _ in range(self.num_envs)]
+
+        self.t_obs = self.subproc_env.reset() / 255.0
+        self.t_dones = [False for _ in range(self.num_envs)]
+
+        self.train_states = None
+
+        self.minibatch_observations = []
+        self.minibatch_actions = []
+        self.minibatch_dones = []
+
+        return self.t_obs
 
     def render_actual_frames(self):
         return self.subproc_env.render()
@@ -121,7 +141,7 @@ class SimulatorTrainEnv:
 
     def train(self):
 
-        assert len(self.minibatch_observations) == len(self.minibatch_actions + 1)
+        assert len(self.minibatch_observations) == len(self.minibatch_actions) + 1
         assert len(self.minibatch_observations) == len(self.minibatch_dones)
         assert len(self.minibatch_actions) == self.train_seq_length
 
@@ -135,16 +155,51 @@ class SimulatorTrainEnv:
 
         mask = 1 - self.minibatch_dones
 
-        vae_loss, kl_divergence, reconstruction_loss, vae_step = self.vae.train_on_batch(
-            frames_batch=self.minibatch_observations)
+        mb_obs_shape = self.minibatch_observations.shape
+
+        vae_loss, kl_divergence, reconstruction_loss, vae_step, encoded_obs = self.vae.train_on_batch(
+            frames_batch=np.reshape(
+                self.minibatch_observations,
+                newshape=[mb_obs_shape[0] * mb_obs_shape[1], *mb_obs_shape[2:]]
+            )
+        )
+
+        encoded_obs = np.reshape(encoded_obs, newshape=[mb_obs_shape[0], mb_obs_shape[1], self.state_rnn.latent_dim])
 
         rnn_loss, states_out, rnn_step = self.state_rnn.train_on_batch(
-            input_sequence_batch=self.minibatch_observations[:, :-1],
-            target_sequence_batch=self.minibatch_observations[:, 1:],
+            input_code_sequence_batch=encoded_obs[:, :-1],
+            target_code_sequence_batch=encoded_obs[:, 1:],
             states_mask_sequence_batch=mask,
+            input_action_sequence_batch=self.minibatch_actions,
             states_batch=self.train_states)
 
-        logger.debug("VAE step {} loss {} - RNN step {} loss {}".format(vae_step, vae_loss, rnn_step, rnn_loss))
+        self.loss_accumulators['rnn'] += rnn_loss
+        self.loss_accumulators['vae'] += vae_loss
+
+        if vae_step == 1 or vae_step % 100 == 0:
+            logger.debug("VAE step {} loss {} - RNN step {} loss {}".format(
+                vae_step,
+                self.loss_accumulators['vae'] / len(self.minibatch_actions),
+                rnn_step,
+                self.loss_accumulators['rnn'] / len(self.minibatch_actions),
+            ))
+
+            # reset accumulators to 0
+            self.loss_accumulators = dict.fromkeys(self.loss_accumulators, 0)
 
         self.train_states = states_out
 
+        if vae_step == 1 or vae_step % 2000 == 0:
+
+            self.vae.save_model()
+            self.state_rnn.save_model()
+
+            if self.validation_data_dir is not None:
+                avg_val_loss = validate_vae_state_rnn_pair_on_tf_records(
+                    data_dir=self.validation_data_dir,
+                    vae=self.vae,
+                    state_rnn=self.state_rnn,
+                    sess=self.sess,
+                    allowed_action_space=self.action_space
+                )
+                logger.info("Avg val loss: {}".format(avg_val_loss))

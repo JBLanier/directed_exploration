@@ -144,17 +144,18 @@ class VAE(Model):
 
         feed_dict = {self.x: frames_batch}
 
-        _, loss, kl_divergence, reconstruction_loss, summaries, step = self.sess.run([self.train_op,
+        _, loss, kl_divergence, reconstruction_loss, summaries, step, encodings = self.sess.run([self.train_op,
                                                                                       self.loss,
                                                                                       self.kl_div_loss,
                                                                                       self.reconstruction_loss,
                                                                                       self.tf_summaries_merged,
-                                                                                      self.local_step],
+                                                                                      self.local_step,
+                                                                                    self.z_encoded],
                                                                                      feed_dict=feed_dict)
 
         self.writer.add_summary(summaries, step)
 
-        return loss, kl_divergence, reconstruction_loss, step
+        return loss, kl_divergence, reconstruction_loss, step, encodings
 
     # def train_on_input_fn(self, input_fn, steps=None, save_every_n_steps=30000):
     #

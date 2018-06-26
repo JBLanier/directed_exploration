@@ -12,7 +12,7 @@ import cv2
 if __name__ == '__main__':
 
     # working_dir = '/home/jb/git/directed_exploration/itexplore_20180618222419'
-    working_dir = '/home/jb/git/directed_exploration/itexplore_only_vae'
+    working_dir = None
 
     if working_dir:
         root_save_dir = working_dir
@@ -25,22 +25,31 @@ if __name__ == '__main__':
                  redirect_stderr=True,
                  handle_tensorflow=True)
 
-    num_env = 48
+    num_env = 12*16
 
     config = tf.ConfigProto(allow_soft_placement=True)
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
 
-    sim = SimulatorTrainEnv(env_id='boxpushmaze-v0',
+    sim = SimulatorTrainEnv(env_id='BreakoutDeterministic-v4',
                             num_env=num_env,
-                            latent_dim=16,
+                            latent_dim=128,
                             working_dir=root_save_dir,
                             train_seq_length=5,
                             sequences_per_epoch=num_env*5,
-                            validation_data_dir='/media/jb/m2/boxpushmaze_validation_rollouts/',
-                            heatmaps=True,
+                            validation_data_dir=None,
+                            heatmaps=False,
                             sess=sess)
-    sim.reset()
+
+    # sim = SimulatorTrainEnv(env_id='boxpushsimple-v0',
+    #                         num_env=num_env,
+    #                         latent_dim=16,
+    #                         working_dir=root_save_dir,
+    #                         train_seq_length=5,
+    #                         sequences_per_epoch=num_env*5,
+    #                         validation_data_dir=None,
+    #                         heatmaps=False,
+    #                         sess=sess)
 
     '''
     Run A2C on sim
@@ -66,23 +75,21 @@ if __name__ == '__main__':
     # from pyglet.window import key
     #
     # def key_press(k, mod):
-    #     if k == key.RIGHT: action[0] = 1
-    #     if k == key.UP:    action[0] = 2
-    #     if k == key.DOWN:  action[0] = 3
-    #     if k == key.LEFT:  action[0] = 4
+    #     if k == key.RIGHT: action[0] = 3
+    #     if k == key.UP:    action[0] = 1
+    #     if k == key.LEFT:  action[0] = 2
     #
     #
     # def key_release(k, mod):
-    #     if k == key.RIGHT and action[0] == 1: action[0] = 0
-    #     if k == key.UP and action[0] == 2: action[0] = 0
-    #     if k == key.DOWN and action[0] == 3: action[0] = 0
-    #     if k == key.LEFT and action[0] == 4: action[0] = 0
+    #     if k == key.RIGHT and action[0] == 3: action[0] = 0
+    #     if k == key.UP and action[0] == 1: action[0] = 0
+    #     if k == key.LEFT and action[0] == 2: action[0] = 0
     #
     # import pyglet
     #
     # def update(dt):
     #     sim.render_actual_frames()
-    #     observation, reward, done, info = sim.step([action[0] for _ in range(num_env)])
+    #     observation, reward, done, info = sim.step(np.asarray([action[0] for _ in range(num_env)]))
     #     print("reward: {}".format(reward))
     #     for i, obs in enumerate(observation):
     #         cv2.imshow(str(i), obs[:,:,::-1])

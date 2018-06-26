@@ -99,20 +99,43 @@ def validate_vae_state_rnn_pair_on_tf_records(data_dir, vae, state_rnn, sess, al
                 except tf.errors.OutOfRangeError:
                     break
 
-                # for action in batch_actions:
-                #     assert allowed_action_space.contains(action)
+                if batch_actions.shape[1] == allowed_action_space.n:
+                    # convert from one hot
+                    batch_actions = np.argmax(batch_actions, axis=1)
+
+                batch_actions = np.squeeze(batch_actions)
+
+                assert len(batch_actions.shape) == 1
+
+                for action in batch_actions:
+                    assert allowed_action_space.contains(action)
 
                 input_frames = batch_frames[:-1]
                 input_actions = batch_actions[:-1]
 
                 input_frames_encoded = vae.encode_frames(input_frames)
 
-                frame_predictions_encoded = state_rnn.predict_on_sequences(
-                    z_sequences=np.expand_dims(input_frames_encoded, 0),
-                    action_sequences=np.expand_dims(input_actions, 0),
-                    sequence_lengths=[len(input_frames)])
+                # frame_predictions_encoded = state_rnn.predict_on_frames(
+                #     z_sequences=np.expand_dims(input_frames_encoded, 0),
+                #     action_sequences=np.expand_dims(input_actions, 0),
+                #     states_mask=[True for _ in range(len(input_frames_encoded))]
+                #
+                # )
 
-                losses = vae.get_loss_for_decoded_frames(z_codes=np.reshape(frame_predictions_encoded, newshape=[-1, vae.latent_dim]),
+                frame_predictions_encoded = np.empty_like(input_frames_encoded)
+                state = None
+                for i, (input_code, action) in enumerate(zip(input_frames_encoded, input_actions)):
+                    predicted_code, state = state_rnn.predict_on_frames(
+                        z_codes=np.expand_dims(input_code, 0),
+                        actions=np.expand_dims(action, 0),
+                        states_mask=[[True]],
+                        states_in=state
+                    )
+
+                    frame_predictions_encoded[i] = np.reshape(predicted_code, newshape=vae.latent_dim)
+
+                losses = vae.get_loss_for_decoded_frames(z_codes=np.reshape(frame_predictions_encoded,
+                                                        newshape=[-1, vae.latent_dim]),
                                                          target_frames=batch_frames[1:])
                 sequence_mean_loss = np.mean(losses)
 
