@@ -8,7 +8,7 @@ import time
 import multiprocessing
 from directed_exploration.vae import VAE
 from directed_exploration.anticipator import AnticipatorRNN
-from directed_exploration.de_logging import init_logging
+from directed_exploration.logging_ops import init_logging
 import datetime
 import argparse
 from tkinter import *

@@ -108,6 +108,7 @@ def make_subproc_env(env_id, num_env, width, height, start_index=0):
     """
     def make_env(rank):  # pylint: disable=C0111
         def _thunk():
+            print("\nGYM ID : {}\n".format(env_id))
             env = gym.make(env_id)
             env = ResizeFrameWrapper(env, width, height)
             # env.seed(seed + rank)

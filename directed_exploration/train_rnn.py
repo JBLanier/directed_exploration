@@ -7,7 +7,7 @@ import pickle
 import tensorflow as tf
 import multiprocessing
 from directed_exploration.vae import VAE
-from directed_exploration.de_logging import init_logging
+from directed_exploration.logging_ops import init_logging
 import gym
 import gym_boxpush
 import cv2

@@ -1,18 +1,28 @@
-from directed_exploration.de_logging import init_logging
-from directed_exploration.simulator_train_env import SimulatorTrainEnv
+from directed_exploration.logging_ops import init_logging
+from directed_exploration.subproc_env_sim_wrapper import SubprocEnvSimWrapper
+from directed_exploration.state_rnn import StateRNN
+from directed_exploration.sep_vae_rnn_sim import SeparateVaeRnnSim
+from directed_exploration.utils.env_util import make_record_write_subproc_env, make_subproc_env
+
 
 import datetime
 import os
 import tensorflow as tf
 import numpy as np
 import gym_boxpush
+import keyboard
 import cv2
 
 
 if __name__ == '__main__':
 
-    # working_dir = '/home/jb/git/directed_exploration/itexplore_20180618222419'
-    working_dir = None
+    num_env = 1
+    env_id = 'BreakoutDeterministic-v4'
+    # Heatmaps only work with boxpush environments
+    heatmaps = False
+
+    working_dir = 'itexplore_20180625211256'
+    # working_dir = None
 
     if working_dir:
         root_save_dir = working_dir
@@ -25,31 +35,29 @@ if __name__ == '__main__':
                  redirect_stderr=True,
                  handle_tensorflow=True)
 
-    num_env = 12*16
-
     config = tf.ConfigProto(allow_soft_placement=True)
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
 
-    sim = SimulatorTrainEnv(env_id='BreakoutDeterministic-v4',
-                            num_env=num_env,
-                            latent_dim=128,
-                            working_dir=root_save_dir,
-                            train_seq_length=5,
-                            sequences_per_epoch=num_env*5,
-                            validation_data_dir=None,
-                            heatmaps=False,
-                            sess=sess)
+    sim = SeparateVaeRnnSim(latent_dim=128, action_dim=4, working_dir=working_dir, sess=sess)
 
-    # sim = SimulatorTrainEnv(env_id='boxpushsimple-v0',
-    #                         num_env=num_env,
-    #                         latent_dim=16,
-    #                         working_dir=root_save_dir,
-    #                         train_seq_length=5,
-    #                         sequences_per_epoch=num_env*5,
-    #                         validation_data_dir=None,
-    #                         heatmaps=False,
-    #                         sess=sess)
+    print("\nmaking env\n")
+
+    if heatmaps:
+        env = make_record_write_subproc_env(env_id=env_id, num_env=num_env)
+    else:
+        env = make_subproc_env(env_id=env_id, num_env=num_env, width=64, height=64)
+
+    print("\ndone making env\n")
+
+    sim_env = SubprocEnvSimWrapper(sim=sim,
+                                   subproc_env=env,
+                                   working_dir=root_save_dir,
+                               train_seq_length=5,
+                               sequences_per_epoch=num_env*5,
+                               validation_data_dir=None,
+                               heatmaps=False,
+                               do_train=True)
 
     '''
     Run A2C on sim
@@ -57,7 +65,7 @@ if __name__ == '__main__':
     from baselines.a2c.a2c import learn
     from baselines.ppo2.policies import LstmPolicy
 
-    learn(policy=LstmPolicy, env=sim, seed=42, total_timesteps=int(int(10e6) * 1.1), lrschedule='constant', ent_coef=0.4)
+    learn(policy=LstmPolicy, env=sim_env, seed=42, total_timesteps=int(int(10e6) * 1.1), lrschedule='constant', ent_coef=0.4)
 
 
     '''
@@ -75,22 +83,32 @@ if __name__ == '__main__':
     # from pyglet.window import key
     #
     # def key_press(k, mod):
-    #     if k == key.RIGHT: action[0] = 3
+    #     print("down")
+    #     if k == key.RIGHT: action[0] = 2
     #     if k == key.UP:    action[0] = 1
-    #     if k == key.LEFT:  action[0] = 2
+    #     if k == key.LEFT:  action[0] = 3
     #
     #
     # def key_release(k, mod):
-    #     if k == key.RIGHT and action[0] == 3: action[0] = 0
+    #     print("up")
+    #     if k == key.RIGHT and action[0] == 2: action[0] = 0
     #     if k == key.UP and action[0] == 1: action[0] = 0
-    #     if k == key.LEFT and action[0] == 2: action[0] = 0
+    #     if k == key.LEFT and action[0] == 3: action[0] = 0
     #
     # import pyglet
     #
+    #
+    #
+    # window = pyglet.window.Window()
+    #
     # def update(dt):
+    #     if keyboard.is_pressed('q'):
+    #         print("q pressed")
+    #     if keyboard.is_pressed('t'):
+    #         print("t pressed")
     #     sim.render_actual_frames()
     #     observation, reward, done, info = sim.step(np.asarray([action[0] for _ in range(num_env)]))
-    #     print("reward: {}".format(reward))
+    #     # print("reward: {}".format(reward))
     #     for i, obs in enumerate(observation):
     #         cv2.imshow(str(i), obs[:,:,::-1])
     #     if info['generated_frames'] is not None:
@@ -98,9 +116,8 @@ if __name__ == '__main__':
     #             cv2.imshow('generated {}'.format(i), frame[:, :, ::-1])
     #     cv2.waitKey(1)
     #
-    # window = pyglet.window.Window()
-    # window.on_key_press = key_press
-    # window.on_key_release = key_release
+    # # window.on_key_press = key_press
+    # # window.on_key_release = key_release
     # pyglet.clock.schedule_interval(update, 1 / 30.0)
     #
     # pyglet.app.run()

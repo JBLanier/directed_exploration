@@ -7,6 +7,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+#TODO All of this code is deprecated
 
 def get_vae_deque_input_fn(train_deque, batch_size, shuffle_buffer_size=1000):
 

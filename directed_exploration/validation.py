@@ -151,7 +151,7 @@ def validate_vae_state_rnn_pair_on_tf_records(data_dir, vae, state_rnn, sess, al
 
 
 if __name__ == '__main__':
-    from directed_exploration.de_logging import init_logging
+    from directed_exploration.logging_ops import init_logging
     init_logging()
 
     sess = tf.Session()
