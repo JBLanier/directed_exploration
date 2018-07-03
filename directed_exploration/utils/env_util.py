@@ -3,6 +3,7 @@ from multiprocessing import Process, Pipe
 from baselines.common.vec_env import VecEnv, CloudpickleWrapper
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 import gym
+import gym_boxpush
 import cv2
 
 def record_write_subproc_worker(remote, parent_remote, env_fn_wrapper):
@@ -95,8 +96,6 @@ class ResizeFrameWrapper(gym.ObservationWrapper):
             dtype=np.uint8
         )
 
-        print("\n\n\norig observation space: {}\nnew: {}\n\n".format(env.observation_space, self.observation_space))
-
     def observation(self, frame):
         frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
         return frame[:, :, :]
@@ -108,7 +107,6 @@ def make_subproc_env(env_id, num_env, width, height, start_index=0):
     """
     def make_env(rank):  # pylint: disable=C0111
         def _thunk():
-            print("\nGYM ID : {}\n".format(env_id))
             env = gym.make(env_id)
             env = ResizeFrameWrapper(env, width, height)
             # env.seed(seed + rank)

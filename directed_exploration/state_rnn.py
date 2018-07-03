@@ -34,7 +34,10 @@ def dynamic_lstm(input_sequence_batch, retain_state_mask_sequence_batch, initial
     # ms = [v for v in tf.split(axis=1, num_or_size_splits=nsteps, value=ms)]
 
     input_sequence_batch = tf.transpose(input_sequence_batch, [1, 0, 2], name='trasnpose_xs')
-    retain_state_mask_sequence_batch = tf.transpose(retain_state_mask_sequence_batch, [1, 0], name='transpose_ms')
+    retain_state_mask_sequence_batch = tf.expand_dims(
+        tf.transpose(retain_state_mask_sequence_batch, [1, 0], name='transpose_ms'),
+        axis=2
+    )
 
     nbatch, nin = [v.value for v in input_sequence_batch[0].get_shape()]
     with tf.variable_scope(scope):

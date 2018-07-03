@@ -10,27 +10,26 @@ import os
 import tensorflow as tf
 import numpy as np
 import gym_boxpush
-import keyboard
 import cv2
 
 
 if __name__ == '__main__':
 
-    num_env = 1
-    env_id = 'BreakoutDeterministic-v4'
+    num_env = 48
+    # env_id = 'BreakoutDeterministic-v4'
+    env_id = 'boxpushmaze-v0'
+
     # Heatmaps only work with boxpush environments
-    heatmaps = False
+    heatmaps = True
 
-    working_dir = 'itexplore_20180625211256'
-    # working_dir = None
+    # working_dir = 'itexplore_20180625211256'
+    working_dir = None
 
-    if working_dir:
-        root_save_dir = working_dir
-    else:
+    if working_dir is None:
         date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        root_save_dir = './itexplore_{}'.format(date_identifier)
+        working_dir = './itexplore_{}'.format(date_identifier)
 
-    init_logging(logfile=os.path.join(root_save_dir, 'events.log'),
+    init_logging(logfile=os.path.join(working_dir, 'events.log'),
                  redirect_stdout=True,
                  redirect_stderr=True,
                  handle_tensorflow=True)
@@ -39,25 +38,24 @@ if __name__ == '__main__':
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
 
-    sim = SeparateVaeRnnSim(latent_dim=128, action_dim=4, working_dir=working_dir, sess=sess)
-
-    print("\nmaking env\n")
+    summary_writer = tf.summary.FileWriter(working_dir)
 
     if heatmaps:
         env = make_record_write_subproc_env(env_id=env_id, num_env=num_env)
     else:
         env = make_subproc_env(env_id=env_id, num_env=num_env, width=64, height=64)
 
-    print("\ndone making env\n")
+    sim = SeparateVaeRnnSim(latent_dim=128, action_dim=env.action_space.n, working_dir=working_dir, sess=sess, summary_writer=summary_writer)
 
     sim_env = SubprocEnvSimWrapper(sim=sim,
                                    subproc_env=env,
-                                   working_dir=root_save_dir,
+                                   working_dir=working_dir,
                                train_seq_length=5,
                                sequences_per_epoch=num_env*5,
-                               validation_data_dir=None,
-                               heatmaps=False,
-                               do_train=True)
+                               validation_data_dir='/mnt/m2/boxpushmaze_validation_rollouts',
+                               heatmaps=heatmaps,
+                               do_train=True,
+                                   summary_writer=summary_writer)
 
     '''
     Run A2C on sim

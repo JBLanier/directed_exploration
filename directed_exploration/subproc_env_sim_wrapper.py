@@ -32,7 +32,7 @@ def pretty_dict_keys_with_values(dictonary):
 
 class SubprocEnvSimWrapper:
     def __init__(self, working_dir, sim, train_seq_length, sequences_per_epoch, subproc_env,
-                 heatmaps=False, validation_data_dir=None, return_generated_frames_in_info=False, do_train=True):
+                 heatmaps=False, validation_data_dir=None, return_generated_frames_in_info=False, do_train=True, summary_writer=None):
 
         self.sim = sim
 
@@ -58,6 +58,10 @@ class SubprocEnvSimWrapper:
 
         self.train_states = None
         self.t_states = None
+
+        self.current_step = 1
+
+        self.summary_writer = summary_writer
 
         if heatmaps:
             self.set_heatmap_record_write_to_current_step()
@@ -97,7 +101,7 @@ class SubprocEnvSimWrapper:
             if self.do_train:
                 self.train()
 
-        if self.heatmaps and self.sim.get_current_step % 50 == 0:
+        if self.heatmaps and self.current_step % 20000 == 0:
             self.set_heatmap_record_write_to_current_step()
             logger.debug("Creating Heatmap...")
             heatmap_save_location = generate_boxpush_heatmap_from_npy_records(
@@ -112,6 +116,8 @@ class SubprocEnvSimWrapper:
         self.t_obs = t_plus_1_obs
         self.t_dones = t_plus_1_dones
         self.t_states = t_plus_1_states
+
+        self.current_step += 1
 
         return t_plus_1_obs, losses, t_plus_1_dones, {'generated_frames': t_plus_1_predictions}
 
@@ -135,7 +141,7 @@ class SubprocEnvSimWrapper:
         return self.subproc_env.render()
 
     def get_current_heatmap_record_prefix(self):
-        return "step{}".format(self.sim.get_current_step())
+        return "env_step{}".format(self.current_step)
 
     def set_heatmap_record_write_to_current_step(self):
         self.subproc_env.set_record_write(write_dir=os.path.join(self.working_dir, HEATMAP_FOLDER_NAME),
@@ -144,6 +150,7 @@ class SubprocEnvSimWrapper:
     def train(self):
 
         step, losses, states_out = self.sim.train_on_batch(self.minibatch_observations, self.minibatch_actions, self.minibatch_dones, self.train_states)
+        print(losses)
 
         if self.loss_accumulators is None:
             self.loss_accumulators = losses
@@ -151,10 +158,11 @@ class SubprocEnvSimWrapper:
             for key in self.loss_accumulators.keys():
                 self.loss_accumulators[key] += losses[key]
 
-        if step == 1 or step % 100 == 0:
+        print_loss_every = 100
+        if step == 1 or step % print_loss_every == 0:
             for key in self.loss_accumulators.keys():
-                self.loss_accumulators[key] /= len(self.minibatch_actions)
-            logger.info(pretty_dict_keys_with_values(self.loss_accumulators))
+                self.loss_accumulators[key] /= print_loss_every
+            logger.info("sim train step {} - {}".format(step, pretty_dict_keys_with_values(self.loss_accumulators)))
 
             # reset accumulators
             self.loss_accumulators = None
@@ -172,5 +180,13 @@ class SubprocEnvSimWrapper:
                 val_losses = self.sim.validate(validation_data_dir=self.validation_data_dir,
                                   allowed_action_space=self.action_space)
 
+                summary = tf.Summary()
+                for key in val_losses.keys():
+                    summary.value.add(tag=key, simple_value=val_losses[key])
+                self.summary_writer.add_summary(summary, self.sim.get_current_step())
+                self.summary_writer.flush()
+
                 logger.info(pretty_dict_keys_with_values(val_losses))
+
+
 

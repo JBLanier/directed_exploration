@@ -64,7 +64,7 @@ class SeparateVaeRnnSim:
         assert obs_sequence_batch.shape[0] == action_sequence_batch.shape[0]
         assert obs_sequence_batch.shape[0] == dones_sequence_batch.shape[0]
 
-        mask = 1 - dones_sequence_batch
+        mask = dones_sequence_batch
 
         mb_obs_shape = obs_sequence_batch.shape
 
@@ -96,4 +96,4 @@ class SeparateVaeRnnSim:
             allowed_action_space=allowed_action_space
         )
 
-        return {'Average Validation Loss': avg_val_loss}
+        return {'avg_val_loss': avg_val_loss}
