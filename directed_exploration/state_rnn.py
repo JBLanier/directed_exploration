@@ -49,8 +49,8 @@ def dynamic_lstm(input_sequence_batch, retain_state_mask_sequence_batch, initial
     def _dynamic_lstm_step(state_accumulator, inputs_elem):
         c, h = state_accumulator
         batch_inputs, batch_mask = inputs_elem
-        c = c * (1 - batch_mask)
-        h = h * (1 - batch_mask)
+        c = c * batch_mask
+        h = h * batch_mask
         z = tf.matmul(batch_inputs, wx) + tf.matmul(h, wh) + b
         i, f, o, u = tf.split(axis=1, num_or_size_splits=4, value=z)
         i = tf.nn.sigmoid(i)
@@ -67,32 +67,32 @@ def dynamic_lstm(input_sequence_batch, retain_state_mask_sequence_batch, initial
     return sequence_batches_out, state_batch_out
 
 
-def lstm(xs, ms, s, scope, nh, nsteps, init_scale=1.0):
-
-    xs = [tf.squeeze(v, [1]) for v in tf.split(axis=1, num_or_size_splits=nsteps, value=xs)]
-    ms = [v for v in tf.split(axis=1, num_or_size_splits=nsteps, value=ms)]
-
-    nbatch, nin = [v.value for v in xs[0].get_shape()]
-    with tf.variable_scope(scope):
-        wx = tf.get_variable("wx", [nin, nh * 4], initializer=ortho_init(init_scale))
-        wh = tf.get_variable("wh", [nh, nh * 4], initializer=ortho_init(init_scale))
-        b = tf.get_variable("b", [nh * 4], initializer=tf.constant_initializer(0.0))
-    c, h = tf.split(axis=1, num_or_size_splits=2, value=s)
-    for idx, (x, m) in enumerate(zip(xs, ms)):
-
-        c = c * (1 - m)
-        h = h * (1 - m)
-        z = tf.matmul(x, wx) + tf.matmul(h, wh) + b
-        i, f, o, u = tf.split(axis=1, num_or_size_splits=4, value=z)
-        i = tf.nn.sigmoid(i)
-        f = tf.nn.sigmoid(f)
-        o = tf.nn.sigmoid(o)
-        u = tf.tanh(u)
-        c = f * c + i * u
-        h = o * tf.tanh(c)
-        xs[idx] = h
-    s = tf.concat(axis=1, values=[c, h])
-    return xs, s
+# def lstm(xs, ms, s, scope, nh, nsteps, init_scale=1.0):
+#
+#     xs = [tf.squeeze(v, [1]) for v in tf.split(axis=1, num_or_size_splits=nsteps, value=xs)]
+#     ms = [v for v in tf.split(axis=1, num_or_size_splits=nsteps, value=ms)]
+#
+#     nbatch, nin = [v.value for v in xs[0].get_shape()]
+#     with tf.variable_scope(scope):
+#         wx = tf.get_variable("wx", [nin, nh * 4], initializer=ortho_init(init_scale))
+#         wh = tf.get_variable("wh", [nh, nh * 4], initializer=ortho_init(init_scale))
+#         b = tf.get_variable("b", [nh * 4], initializer=tf.constant_initializer(0.0))
+#     c, h = tf.split(axis=1, num_or_size_splits=2, value=s)
+#     for idx, (x, m) in enumerate(zip(xs, ms)):
+#
+#         c = c * (1 - m)
+#         h = h * (1 - m)
+#         z = tf.matmul(x, wx) + tf.matmul(h, wh) + b
+#         i, f, o, u = tf.split(axis=1, num_or_size_splits=4, value=z)
+#         i = tf.nn.sigmoid(i)
+#         f = tf.nn.sigmoid(f)
+#         o = tf.nn.sigmoid(o)
+#         u = tf.tanh(u)
+#         c = f * c + i * u
+#         h = o * tf.tanh(c)
+#         xs[idx] = h
+#     s = tf.concat(axis=1, values=[c, h])
+#     return xs, s
 
 def batch_to_seq(h, nbatch, nsteps, flat=False):
     if flat:

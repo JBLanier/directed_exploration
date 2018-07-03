@@ -64,7 +64,7 @@ class SeparateVaeRnnSim:
         assert obs_sequence_batch.shape[0] == action_sequence_batch.shape[0]
         assert obs_sequence_batch.shape[0] == dones_sequence_batch.shape[0]
 
-        mask = dones_sequence_batch
+        mask = 1 - dones_sequence_batch
 
         mb_obs_shape = obs_sequence_batch.shape
 

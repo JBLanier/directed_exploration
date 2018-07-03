@@ -45,7 +45,7 @@ if __name__ == '__main__':
     else:
         env = make_subproc_env(env_id=env_id, num_env=num_env, width=64, height=64)
 
-    sim = SeparateVaeRnnSim(latent_dim=128, action_dim=env.action_space.n, working_dir=working_dir, sess=sess, summary_writer=summary_writer)
+    sim = SeparateVaeRnnSim(latent_dim=4, action_dim=env.action_space.n, working_dir=working_dir, sess=sess, summary_writer=summary_writer)
 
     sim_env = SubprocEnvSimWrapper(sim=sim,
                                    subproc_env=env,
