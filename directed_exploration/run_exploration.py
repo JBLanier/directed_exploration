@@ -17,7 +17,7 @@ if __name__ == '__main__':
 
     num_env = 48
     # env_id = 'BreakoutDeterministic-v4'
-    env_id = 'boxpushmaze-v0'
+    env_id = 'boxpushsimple-v0'
 
     # Heatmaps only work with boxpush environments
     heatmaps = True
@@ -52,7 +52,7 @@ if __name__ == '__main__':
                                    working_dir=working_dir,
                                train_seq_length=5,
                                sequences_per_epoch=num_env*5,
-                               validation_data_dir='/mnt/m2/boxpushmaze_validation_rollouts',
+                               validation_data_dir='/mnt/m2/boxpushsimple_val_rollouts_v2',
                                heatmaps=heatmaps,
                                do_train=True,
                                    summary_writer=summary_writer)

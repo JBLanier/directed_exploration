@@ -25,8 +25,9 @@ class Model(ABC):
 
         if not sess:
             sess = tf.get_default_session()
+            logger.info("Default session is: {}".format(sess))
         if not graph:
-            graph = tf.get_default_graph()
+            graph = sess.graph
 
         self.graph = graph
         self.sess = sess
