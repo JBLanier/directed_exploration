@@ -12,7 +12,7 @@ class Sim(ABC):
         pass
 
     @abstractmethod
-    def predict_on_batch(self,  t_obs, t_actions, t_minus_1_dones, t_state=None, actual_t_plus_one_obs=None, return_t_plus_one_predictions=True):
+    def predict_on_batch(self,  t_obs, t_actions, t_dones, t_state=None, actual_t_plus_one_obs=None, return_t_plus_one_predictions=True):
         """Predicts next observations given batch of current observations, actions, and states
 
         Args:

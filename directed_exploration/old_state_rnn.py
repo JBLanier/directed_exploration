@@ -1,3 +1,5 @@
+
+
 import numpy as np
 import tensorflow as tf
 from directed_exploration.model import Model
@@ -26,28 +28,22 @@ def ortho_init(scale=1.0):
     return _ortho_init
 
 
-def dynamic_lstm(input_sequence_batch, retain_state_mask_sequence_batch, initial_states_batch,
-                 scope, num_hidden, init_scale=1.0):
+def lstm(xs, ms, s, scope, nh, nsteps, init_scale=1.0):
 
-    input_sequence_batch = tf.transpose(input_sequence_batch, [1, 0, 2], name='trasnpose_xs')
-    retain_state_mask_sequence_batch = tf.expand_dims(
-        tf.transpose(retain_state_mask_sequence_batch, [1, 0], name='transpose_ms'),
-        axis=2
-    )
+    xs = [tf.squeeze(v, [1]) for v in tf.split(axis=1, num_or_size_splits=nsteps, value=xs)]
+    ms = [v for v in tf.split(axis=1, num_or_size_splits=nsteps, value=ms)]
 
-    nbatch, nin = [v.value for v in input_sequence_batch[0].get_shape()]
+    nbatch, nin = [v.value for v in xs[0].get_shape()]
     with tf.variable_scope(scope):
-        wx = tf.get_variable("wx", [nin, num_hidden * 4], initializer=ortho_init(init_scale))
-        wh = tf.get_variable("wh", [num_hidden, num_hidden * 4], initializer=ortho_init(init_scale))
-        b = tf.get_variable("b", [num_hidden * 4], initializer=tf.constant_initializer(0.0))
-    c, h = tf.split(axis=1, num_or_size_splits=2, value=initial_states_batch)
+        wx = tf.get_variable("wx", [nin, nh * 4], initializer=ortho_init(init_scale))
+        wh = tf.get_variable("wh", [nh, nh * 4], initializer=ortho_init(init_scale))
+        b = tf.get_variable("b", [nh * 4], initializer=tf.constant_initializer(0.0))
+    c, h = tf.split(axis=1, num_or_size_splits=2, value=s)
+    for idx, (x, m) in enumerate(zip(xs, ms)):
 
-    def _dynamic_lstm_step(state_accumulator, inputs_elem):
-        c, h = state_accumulator
-        batch_inputs, batch_mask = inputs_elem
-        c = c * batch_mask
-        h = h * batch_mask
-        z = tf.matmul(batch_inputs, wx) + tf.matmul(h, wh) + b
+        c = c * m
+        h = h * m
+        z = tf.matmul(x, wx) + tf.matmul(h, wh) + b
         i, f, o, u = tf.split(axis=1, num_or_size_splits=4, value=z)
         i = tf.nn.sigmoid(i)
         f = tf.nn.sigmoid(f)
@@ -55,13 +51,16 @@ def dynamic_lstm(input_sequence_batch, retain_state_mask_sequence_batch, initial
         u = tf.tanh(u)
         c = f * c + i * u
         h = o * tf.tanh(c)
-        return c, h
+        xs[idx] = h
+    s = tf.concat(axis=1, values=[c, h])
+    return xs, s
 
-    states = tf.scan(fn=_dynamic_lstm_step, elems=(input_sequence_batch, retain_state_mask_sequence_batch), initializer=(c, h), back_prop=True)
-    sequence_batches_out = tf.transpose(states[1], [1, 0, 2])
-    state_batch_out = tf.concat(axis=1, values=(states[0][-1], states[1][-1]))
-
-    return sequence_batches_out, state_batch_out
+def batch_to_seq(h, nbatch, nsteps, flat=False):
+    if flat:
+        h = tf.reshape(h, [nbatch, nsteps])
+    else:
+        h = tf.reshape(h, [nbatch, nsteps, -1])
+    return [tf.squeeze(v, [1]) for v in tf.split(axis=1, num_or_size_splits=nsteps, value=h)]
 
 
 def seq_to_batch(h, flat = False):
@@ -73,7 +72,6 @@ def seq_to_batch(h, flat = False):
     else:
         return tf.reshape(tf.stack(values=h, axis=1), [-1])
 
-
 def mask_non_zero_counts(mask):
     with tf.name_scope('mask_non_zero_count'):
         used = tf.sign(tf.abs(mask))
@@ -81,20 +79,22 @@ def mask_non_zero_counts(mask):
         return length
 
 
-def RNN_forward(sequence_inputs, batch_size, state_reset_before_prediction_mask, lstm_size, states_in, latent_dim, variable_scope, reuse=False):
+def RNN_forward(sequence_inputs, sequence_length, batch_size, state_reset_before_prediction_mask, lstm_size, states_in, latent_dim, variable_scope, reuse):
     with tf.variable_scope(variable_scope, reuse=reuse):
         variance_scaling = tf.contrib.layers.variance_scaling_initializer()
         xavier = tf.contrib.layers.xavier_initializer()
 
-        runtime_sequence_length = tf.shape(sequence_inputs)[1]
+        lstm_output, states_out = lstm(xs=sequence_inputs,
+                                            ms=state_reset_before_prediction_mask,
+                                            s=states_in,
+                                            nh=lstm_size,
+                                            nsteps=sequence_length,
+                                            scope='lstm1')
 
-        lstm_output, states_out = dynamic_lstm(input_sequence_batch=sequence_inputs,
-                                               retain_state_mask_sequence_batch=state_reset_before_prediction_mask,
-                                               initial_states_batch=states_in,
-                                               num_hidden=lstm_size,
-                                               scope='lstm1')
+        # lstm_output_for_dense = tf.reshape(lstm_output,
+        #                                    shape=[batch_size * sequence_length, lstm_output.shape[-1]])
 
-        lstm_output_for_dense = tf.reshape(lstm_output, shape=[batch_size*runtime_sequence_length, lstm_size])
+        lstm_output_for_dense = seq_to_batch(lstm_output)
 
         dense1 = tf.layers.dense(inputs=lstm_output_for_dense,
                                  units=256,
@@ -111,28 +111,41 @@ def RNN_forward(sequence_inputs, batch_size, state_reset_before_prediction_mask,
                                  activation=None,
                                  kernel_initializer=xavier)
 
+        runtime_sequence_length = tf.shape(sequence_inputs)[1]
+
         out = tf.reshape(dense3, shape=[batch_size, runtime_sequence_length, latent_dim])
 
         return out, states_out
 
-
-class StateRNN(Model):
+class StateRNNOld(Model):
     def __init__(self, latent_dim=4, action_dim=5, working_dir=None, sess=None, graph=None, summary_writer=None):
         logger.info("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
 
         self.latent_dim = latent_dim
         self.action_dim = action_dim
         self.saved_state = None
+        self.train_sequence_length = 5
 
         save_prefix = 'state_rnn_{}dim'.format(self.latent_dim)
 
         super().__init__(save_prefix, working_dir, sess, graph, summary_writer=summary_writer)
+
+    def return_all_variables_with_values_in_dict(self):
+        tvars_vals = self.sess.run(self.tvars)
+
+        dict = {}
+
+        for var, val in zip(self.tvars, tvars_vals):
+            dict[var.name] = val
+
+        return dict
 
     def _build_model(self, restore_from_dir=None):
 
         with self.graph.as_default():
             rnn_scope = 'STATE_RNN_MODEL'
             with tf.variable_scope(rnn_scope):
+
 
                 self.sequence_inputs = tf.placeholder(tf.float32, shape=[None, None, self.latent_dim + self.action_dim],
                                                       name='z_and_action_inputs')
@@ -154,19 +167,31 @@ class StateRNN(Model):
                 # reshape dense output back to (batch_size, seq_length, ...)
                 rnn_forward_scope = 'rnn_forward'
 
-                self.output, self.states_out = RNN_forward(
+                self.output, self.states_out = tf.cond(
+                    pred=tf.equal(runtime_sequence_length, 1),
+
+                    true_fn=lambda: RNN_forward(
                         sequence_inputs=self.sequence_inputs,
+                        sequence_length=1,
                         batch_size=runtime_batch_size,
                         state_reset_before_prediction_mask=self.state_reset_before_prediction_mask,
                         lstm_size=lstm_size,
                         states_in=self.states_in,
                         latent_dim=self.latent_dim,
                         variable_scope=rnn_forward_scope,
-                        reuse=False)
+                        reuse=False),
 
-                # with tf.control_dependencies([tf.assert_equal(self.output,self.output2), tf.assert_equal(self.states_out, self.states_out2)]):
-                #     self.output = tf.Print(self.output, [self.output])
-                #     self.states_out = tf.Print(self.states_out, [self.states_out])
+                    false_fn=lambda: RNN_forward(
+                        sequence_inputs=self.sequence_inputs,
+                        sequence_length=self.train_sequence_length,
+                        batch_size=runtime_batch_size,
+                        state_reset_before_prediction_mask=self.state_reset_before_prediction_mask,
+                        lstm_size=lstm_size,
+                        states_in=self.states_in,
+                        latent_dim=self.latent_dim,
+                        variable_scope=rnn_forward_scope,
+                        reuse=tf.AUTO_REUSE)
+                )
 
                 with tf.name_scope('mse_loss'):
                     # Compute Squared Error for each frame
@@ -214,18 +239,18 @@ class StateRNN(Model):
 
         self.writer.add_graph(self.graph)
 
-    def return_all_variables_with_values_in_dict(self):
-        tvars_vals = self.sess.run(self.tvars)
-
-        dict = {}
-
-        for var, val in zip(self.tvars, tvars_vals):
-            dict[var.name] = val
-
-        return dict
-
     def train_on_batch(self, input_code_sequence_batch, target_code_sequence_batch, states_mask_sequence_batch,
                        input_action_sequence_batch, states_batch=None):
+
+        # print("--------------------------------------")
+        #
+        # print("input_obs: {}".format(input_code_sequence_batch))
+        # print("input_actions: {}".format(input_action_sequence_batch))
+        # print("targets: {}".format(target_code_sequence_batch))
+        # # print("states: {}".format(states_batch))
+        # print("states masks: {}".format(states_mask_sequence_batch))
+        #
+        # print("--------------------------------------")
 
         assert np.array_equal(input_code_sequence_batch.shape[:-1], target_code_sequence_batch.shape[:-1])
         assert np.array_equal(input_code_sequence_batch.shape[:-1], states_mask_sequence_batch[:, :-1].shape)
@@ -244,16 +269,17 @@ class StateRNN(Model):
             assert np.array_equal(input_code_sequence_batch.shape[0], states_batch.shape[0])
             feed_dict[self.states_in] = states_batch
 
-        _, loss, states_out, step, summaries = self.sess.run([self.train_op,
+        _, loss, states_out, step, summaries, predictions = self.sess.run([self.train_op,
                                                               self.mse_loss,
                                                               self.states_out,
                                                               self.local_step,
-                                                              self.tf_summaries_merged],
+                                                              self.tf_summaries_merged,
+                                                                self.output],
                                                              feed_dict=feed_dict)
 
         self.writer.add_summary(summaries, step)
 
-        return loss, states_out, step
+        return loss, states_out, step, predictions
 
     # def train_on_input_fn(self, input_fn, steps=None):
     #
@@ -400,3 +426,30 @@ class StateRNN(Model):
         self.saved_state = states_out
         return predictions
 
+    # def predict_on_sequences_retain_state(self, z_sequences, action_sequences, sequence_lengths):
+    #     assert z_sequences.shape[2] == self.latent_dim
+    #     assert z_sequences.shape[0:2] == action_sequences.shape[0:2]
+    #
+    #     # todo: this concatenation may be on wrong axis
+    #     raise NotImplementedError
+    #     feed_dict = {self.sequence_inputs: np.concatenate((z_sequences, action_sequences), axis=1),
+    #                  self.sequence_lengths: np.asarray([sequence_lengths])}
+    #
+    #     if self.saved_state:
+    #         feed_dict[self.lstm_state_in] = self.saved_state
+    #
+    #     predictions, self.saved_state = self.sess.run([self.output, self.lstm_state_out], feed_dict=feed_dict)
+    #
+    #     return predictions
+
+    # def predict_on_sequences(self, z_sequences, action_sequences, sequence_lengths):
+    #     assert z_sequences.shape[2] == self.latent_dim
+    #     assert z_sequences.shape[0:2] == action_sequences.shape[0:2]
+    #     assert action_sequences.shape[2] == self.action_dim
+    #
+    #     feed_dict = {self.sequence_inputs: np.concatenate((z_sequences, action_sequences), axis=2),
+    #                  self.sequence_lengths: sequence_lengths}
+    #
+    #     predictions = np.squeeze(self.sess.run([self.output], feed_dict=feed_dict))
+    #
+    #     return predictions

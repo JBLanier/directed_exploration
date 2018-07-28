@@ -93,7 +93,7 @@ def write_user_controller_atari_episode_to_tf_record(episode_index, write_dir):
 
 
 def write_user_controlled_boxpush_episode_to_tf_record(episode_index, write_dir, max_episode_length):
-    env = gym.make('boxpushmaze-v0')
+    env = gym.make('boxpushsimple-v0')
 
     filename = os.path.join(write_dir, 'vae_{}.tfrecords'.format(episode_index))
     writer = tf.python_io.TFRecordWriter(filename)
@@ -277,6 +277,7 @@ if __name__ == '__main__':
     if not args.user_controlled:
         generate_random_vae_data(args)
     else:
-        generate_user_controlled_atari_data(args)
+        # generate_user_controlled_atari_data(args)
+        generate_user_controlled_boxpush_data(args)
 
 

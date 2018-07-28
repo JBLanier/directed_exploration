@@ -83,6 +83,7 @@ def make_record_write_subproc_env(env_id, num_env, start_index=0):
     # set_global_seeds(seed)
     return RecordWriteSubprocVecEnv([make_env(i + start_index) for i in range(num_env)])
 
+
 class ResizeFrameWrapper(gym.ObservationWrapper):
     def __init__(self, env, width, height):
         gym.ObservationWrapper.__init__(self, env)
@@ -98,7 +99,22 @@ class ResizeFrameWrapper(gym.ObservationWrapper):
 
     def observation(self, frame):
         frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
-        return frame[:, :, :]
+        return frame
+
+
+class RescaleFrameWrapper(gym.ObservationWrapper):
+    def __init__(self, env):
+        gym.ObservationWrapper.__init__(self, env)
+
+        self.observation_space = gym.spaces.Box(
+            low=0.0,
+            high=1.0,
+            shape=env.observation_space.shape,
+            dtype=np.float32
+        )
+
+    def observation(self, frame):
+        return frame / 255.0
 
 
 def make_subproc_env(env_id, num_env, width, height, start_index=0):
