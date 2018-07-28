@@ -2,7 +2,7 @@ import numpy as np
 import os
 from scipy.stats import gaussian_kde
 import matplotlib.pyplot as plt
-from directed_exploration.de_logging import init_logging
+from directed_exploration.logging_ops import init_logging
 import logging
 
 logger = logging.getLogger(__name__)

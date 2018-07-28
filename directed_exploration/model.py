@@ -21,35 +21,32 @@ def variable_summaries(var):
 
 class Model(ABC):
 
-    def __init__(self, save_prefix, working_dir=None, sess=None, graph=None, summary_writer=None):
+    def __init__(self, save_prefix, working_dir, sess=None, graph=None, summary_writer=None):
 
         if not sess:
             sess = tf.get_default_session()
+            logger.info("Default session is: {}".format(sess))
         if not graph:
-            graph = tf.get_default_graph()
+            graph = sess.graph
 
         self.graph = graph
         self.sess = sess
         self.save_prefix = save_prefix
         date_identifier = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         restore_from_dir = None
-        if working_dir:
-            self.save_file_path = os.path.join(working_dir, self.save_prefix)
-            if os.path.exists(os.path.join(self.save_file_path, 'checkpoint')):
 
-                self.save_metagraph = False
-                restore_from_dir = self.save_file_path
-            else:
+        self.save_file_path = os.path.join(working_dir, self.save_prefix)
+        if os.path.exists(os.path.join(self.save_file_path, 'checkpoint')):
 
-                self.save_metagraph = True
-
-            self.identifier = os.path.basename(os.path.normpath(self.save_file_path))
+            self.save_metagraph = False
+            restore_from_dir = self.save_file_path
         else:
-            self.save_metagraph = True
-            self.identifier = '{}_{}'.format(self.save_prefix, date_identifier)
-            self.save_file_path = './' + self.identifier
 
-        if summary_writer:
+            self.save_metagraph = True
+
+        self.identifier = os.path.basename(os.path.normpath(self.save_file_path))
+
+        if summary_writer is not None:
             self.writer = summary_writer
         else:
             self.writer = tf.summary.FileWriter(working_dir)
@@ -81,9 +78,12 @@ class Model(ABC):
         logger.info("{} model saved in path: {}".format(self.save_prefix, save_path))
 
     def __del__(self):
+        logger.info("del called")
         if self.writer:
             self.writer.close()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        logger.info("exit called")
+
         if self.writer:
             self.writer.close()

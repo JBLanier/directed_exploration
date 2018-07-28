@@ -77,7 +77,7 @@ def generate_rollouts_on_anticipator_policy_into_deque(episode_deque, anticipato
     for _ in range(num_episodes_per_environment):
         start = time.time()
         obs = env.reset() / 255.0
-        anticipator.reset_state()
+        anticipator.reset_saved_state()
 
         episode_frames = [np.empty(shape=(max_episode_length, 64, 64, 3), dtype=np.float32) for _ in range(num_env)]
         episode_actions = [np.empty(shape=(max_episode_length, ACTION_DIM), dtype=np.float32) for _ in range(num_env)]

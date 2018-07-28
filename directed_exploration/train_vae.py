@@ -8,7 +8,7 @@ import time
 import multiprocessing
 from directed_exploration.vae import VAE
 from directed_exploration.anticipator import AnticipatorRNN
-from directed_exploration.de_logging import init_logging
+from directed_exploration.logging_ops import init_logging
 import datetime
 import argparse
 from tkinter import *
@@ -163,7 +163,7 @@ def debug_play(vae, env_name, anticipator=None, continous=False):
 
         cv2.imshow("orig", frame[:, :, ::-1])
 
-        cv2.imshow("encoded_decoded", (np.squeeze(vae.encode_decode_frames(np.expand_dims(normalized_frame, axis=0)))[:, :, ::-1]))
+        cv2.imshow("encoded_decoded", (np.squeeze(vae.encode_then_decode_frames(np.expand_dims(normalized_frame, axis=0)))[:, :, ::-1]))
         cv2.imshow("encoded_decoded2", np.squeeze(vae.decode_frames(vae.encode_frames(np.expand_dims(normalized_frame, axis=0))))[:, :, ::-1])
         env.render()
         cv2.waitKey(1)

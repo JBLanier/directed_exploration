@@ -7,7 +7,7 @@ import pickle
 import tensorflow as tf
 import multiprocessing
 from directed_exploration.vae import VAE
-from directed_exploration.de_logging import init_logging
+from directed_exploration.logging_ops import init_logging
 import gym
 import gym_boxpush
 import cv2
@@ -134,9 +134,9 @@ def train_state_rnn(rnn, train_data_dir):
 
 
 def debug_play(rnn, vae):
-    env = gym.make('boxpushmaze-v0')
+    env = gym.make('boxpushsimple-v0')
     frame = env.reset()
-    rnn.reset_state()
+    rnn.reset_saved_state()
 
     action = [0]
 
@@ -157,16 +157,16 @@ def debug_play(rnn, vae):
     env.viewer.window.on_key_press = key_press
     env.viewer.window.on_key_release = key_release
 
-    prediction = rnn.predict_on_frames_retain_state(vae.encode_frames(np.expand_dims(frame, 0)), np.expand_dims(action, 0))
+    prediction = rnn.predict_on_frames_retain_state(vae.encode_frames(np.expand_dims(frame, 0)), np.expand_dims(action, 0), [1])
 
     while True:
         frame, _, _, _ = env.step(action[0])
         env.render()
 
         frame = frame / 255.0
-        cv2.imshow("encoded_decoded", np.squeeze(vae.encode_decode_frames(np.expand_dims(frame, axis=0)))[:, :, ::-1])
+        cv2.imshow("encoded_decoded", np.squeeze(vae.encode_then_decode_frames(np.expand_dims(frame, axis=0)))[:, :, ::-1])
         cv2.imshow("predicted_decoded", np.squeeze(vae.decode_frames(prediction[:, :]))[:, :, ::-1])
-        prediction = rnn.predict_on_frames_retain_state(prediction[:, :], np.expand_dims(action, 0))
+        prediction = rnn.predict_on_frames_retain_state(prediction[:, :], np.expand_dims(action, 0), [1])
 
         debug_imshow_image_with_action(window_label='orig',frame=frame, action=action)
 
@@ -177,7 +177,7 @@ def debug_play_box_simple_no_vae(rnn):
     env = gym.make('boxpushsimple-v0')
     actual_frame = env.reset()
     prediction = np.reshape(env.debug_get_player_location(), [1, rnn.latent_dim])
-    rnn.reset_state()
+    rnn.reset_saved_state()
 
     action = np.array([0.0, 0.0])
 
@@ -316,7 +316,7 @@ def main(args):
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
     with sess.as_default():
-        state_rnn = StateRNN(working_dir=args.load_rnn_weights, latent_dim=16)
+        state_rnn = StateRNN(working_dir=args.load_rnn_weights, latent_dim=4)
 
         if args.train_rnn:
             if args.train_data_dir:
