@@ -110,11 +110,14 @@ class VAE():
             return reconstruction_loss(x, x_decoded_mean) + kl_loss(x, x_decoded_mean)
 
         self.vae.compile(optimizer='rmsprop', loss=vae_loss, metrics=[kl_loss, reconstruction_loss])
+
         self.vae.summary()
 
 
     def train_on_batch(self, batch):
-        self.vae.train_on_batch(x=batch, y=batch)
+        values = self.vae.train_on_batch(x=batch, y=batch)
+        return dict(zip(self.vae.metrics_names, values))
+
 
     def encode(self, x):
         return self.vae_encoder.predict([x])
