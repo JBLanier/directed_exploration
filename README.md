@@ -1,1 +1,1 @@
-# exploration_search
+# directed_exploration
