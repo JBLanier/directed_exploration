@@ -51,10 +51,8 @@ class SubprocEnvSimWrapper:
 
         self.loss_accumulators = None
 
-        self.t_minus_1_dones = [True for _ in range(self.num_envs)]
-
         self.t_obs = self.subproc_env.reset() / 255.0
-        self.t_dones = [False for _ in range(self.num_envs)]
+        self.t_dones = [True for _ in range(self.num_envs)]
 
         self.train_states = None
         self.t_states = None
@@ -73,13 +71,15 @@ class SubprocEnvSimWrapper:
 
     def step(self, actions):
         t_plus_1_obs, _, t_plus_1_dones, _ = self.subproc_env.step(actions)
+        # self.subproc_env.render()
+        # print(t_plus_1_obs)
         t_plus_1_obs = t_plus_1_obs / 255.0
 
         predict_vals = self.sim.predict_on_batch(
             t_obs=self.t_obs,
             t_actions=actions,
             t_states=self.t_states,
-            t_minus_1_dones=self.t_minus_1_dones,
+            t_dones=self.t_dones,
             actual_t_plus_one_obs=t_plus_1_obs,
             return_t_plus_one_predictions=self.return_generated_frames_in_info
         )
@@ -92,11 +92,13 @@ class SubprocEnvSimWrapper:
 
         self.minibatch_observations.append(self.t_obs)
         self.minibatch_actions.append(convert_to_one_hot(actions, self.action_space.n))
-        self.minibatch_dones.append(self.t_minus_1_dones)
+        self.minibatch_dones.append(self.t_dones)
+
+        # print("batch: {}".format(np.asarray(self.minibatch_observations)[:,:,0,0,0]))
 
         if len(self.minibatch_actions) >= self.train_seq_length:
             self.minibatch_observations.append(t_plus_1_obs)
-            self.minibatch_dones.append(self.t_dones)
+            self.minibatch_dones.append(t_plus_1_dones)
 
             if self.do_train:
                 self.train()
@@ -112,21 +114,19 @@ class SubprocEnvSimWrapper:
             self.old_prefix = self.get_current_heatmap_record_prefix()
 
         # Move iteration forward
-        self.t_minus_1_dones = self.t_dones
         self.t_obs = t_plus_1_obs
         self.t_dones = t_plus_1_dones
         self.t_states = t_plus_1_states
 
         self.current_step += 1
 
-        return t_plus_1_obs, losses, t_plus_1_dones, {'generated_frames': t_plus_1_predictions}
+        return np.copy(t_plus_1_obs), losses, t_plus_1_dones, {'generated_frames': t_plus_1_predictions}
 
     def reset(self):
         logger.info("RESET WAS CALLED")
-        self.t_minus_1_dones = [True for _ in range(self.num_envs)]
 
         self.t_obs = self.subproc_env.reset() / 255.0
-        self.t_dones = [False for _ in range(self.num_envs)]
+        self.t_dones = [True for _ in range(self.num_envs)]
 
         self.t_states = None
         self.train_states = None
@@ -148,9 +148,10 @@ class SubprocEnvSimWrapper:
                                           prefix=self.get_current_heatmap_record_prefix())
 
     def train(self):
-
+        # print("minibatch_obs shape: {}".format(np.asarray(self.minibatch_observations).shape))
+        # print("minibatch_obs: {}".format(np.asarray(self.minibatch_observations)[:,:,0,0,0]))
         step, losses, states_out = self.sim.train_on_batch(self.minibatch_observations, self.minibatch_actions, self.minibatch_dones, self.train_states)
-        print(losses)
+        # print(losses)
 
         if self.loss_accumulators is None:
             self.loss_accumulators = losses

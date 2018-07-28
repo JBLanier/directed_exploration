@@ -29,12 +29,12 @@ class SeparateVaeRnnSim:
     def get_current_step(self):
         return self.vae.sess.run([self.vae.local_step])[0]
 
-    def predict_on_batch(self, t_obs, t_actions, t_minus_1_dones, t_states=None, actual_t_plus_one_obs=None, return_t_plus_one_predictions=True):
+    def predict_on_batch(self, t_obs, t_actions, t_dones, t_states=None, actual_t_plus_one_obs=None, return_t_plus_one_predictions=True):
 
         encoded_current_obs = self.vae.encode_frames(t_obs)
         t_plus_1_code_predictions, t_plus_1_states = self.state_rnn.predict_on_frames(z_codes=encoded_current_obs,
                                                                                       actions=t_actions,
-                                                                                      states_mask=1 - np.asarray(t_minus_1_dones),
+                                                                                      states_mask=1 - np.asarray(t_dones),
                                                                                       states_in=t_states)
 
         tensors_to_evaluate = []

@@ -12,17 +12,25 @@ import numpy as np
 import gym_boxpush
 import cv2
 
+from directed_exploration.test_rnn_sim import TestRNNSim
+from gym.envs.registration import register
+
+register(
+    id='colorchange-v0',
+    entry_point='directed_exploration.gym_colorchange:GymBrightnessChange',
+)
+
 
 if __name__ == '__main__':
 
     num_env = 48
     # env_id = 'BreakoutDeterministic-v4'
-    env_id = 'boxpushsimple-v0'
+    env_id = 'boxpushmaze-v0'
 
     # Heatmaps only work with boxpush environments
-    heatmaps = True
+    heatmaps = False
 
-    # working_dir = 'itexplore_20180625211256'
+    # working_dir = 'itexplore_20180724141315'
     working_dir = None
 
     if working_dir is None:
@@ -45,14 +53,15 @@ if __name__ == '__main__':
     else:
         env = make_subproc_env(env_id=env_id, num_env=num_env, width=64, height=64)
 
-    sim = SeparateVaeRnnSim(latent_dim=4, action_dim=env.action_space.n, working_dir=working_dir, sess=sess, summary_writer=summary_writer)
+    sim = SeparateVaeRnnSim(latent_dim=16, action_dim=env.action_space.n, working_dir=working_dir, sess=sess, summary_writer=summary_writer)
+    # sim = TestRNNSim(latent_dim=1, action_dim=3, working_dir=working_dir, sess=sess, summary_writer=summary_writer)
 
     sim_env = SubprocEnvSimWrapper(sim=sim,
                                    subproc_env=env,
                                    working_dir=working_dir,
                                train_seq_length=5,
                                sequences_per_epoch=num_env*5,
-                               validation_data_dir='/mnt/m2/boxpushsimple_val_rollouts_v2',
+                               validation_data_dir='/mnt/m2/boxpushmaze_validation_rollouts',
                                heatmaps=heatmaps,
                                do_train=True,
                                    summary_writer=summary_writer)

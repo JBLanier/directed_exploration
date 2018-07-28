@@ -145,8 +145,6 @@ def validate_vae_state_rnn_pair_on_tf_records(data_dir, vae, state_rnn, sess, al
                 avg_loss = (avg_loss*frames_tested_on + sequence_mean_loss * len(losses)) / new_total_frames
                 frames_tested_on = new_total_frames
 
-                state_rnn.reset_saved_state()
-
         return avg_loss
 
 
