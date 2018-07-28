@@ -1,3 +1,10 @@
 .idea/
 weights/
 __pycache__
+graph/
+*.egg-info
+tensorboard
+*.log
+itexplore_*
+mcts_*
+.DS_Store
