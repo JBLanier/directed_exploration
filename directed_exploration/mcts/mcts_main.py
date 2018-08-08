@@ -2,21 +2,15 @@ from directed_exploration.mcts.Coach import Coach
 from directed_exploration.mcts.mcts_cnn import MCTS_CNN
 from directed_exploration.utils.AsyncAtariSubprocVecEnv import AsyncAtariSubprocEnv
 from directed_exploration.logging_ops import init_logging, get_logger
+from directed_exploration.utils.data_util import DotDict
 
 import os
 import datetime
 import tensorflow as tf
-from baselines.common.cmd_util import make_atari_env
-from baselines.common.vec_env.vec_frame_stack import VecFrameStack
-
-from baselines.bench import Monitor
 
 from baselines.common import set_global_seeds
 from baselines.common.atari_wrappers import make_atari, wrap_deepmind
 
-class DotDict(dict):
-    def __getattr__(self, name):
-        return self[name]
 
 
 args = DotDict({

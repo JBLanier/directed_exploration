@@ -1,17 +1,8 @@
-from directed_exploration import simulator_data_ops as sdo
-from directed_exploration.vae import VAE
-from directed_exploration.state_rnn import StateRNN
-from directed_exploration.utils.data_util import convertToOneHot
-from directed_exploration.heatmap_gen import generate_boxpush_heatmap_from_npy_records
-from directed_exploration.sim import Sim
+from directed_exploration.utils.heatmap_gen import generate_boxpush_heatmap_from_npy_records
 
-from collections import deque
 import tensorflow as tf
 import numpy as np
 import os
-import gym
-import cv2
-from functools import reduce
 
 import logging
 
@@ -30,9 +21,19 @@ def pretty_dict_keys_with_values(dictonary):
         pretty_str = "{}{}: {} ".format(pretty_str, key, dictonary[key])
     return pretty_str
 
-class SubprocEnvSimWrapper:
-    def __init__(self, working_dir, sim, train_seq_length, sequences_per_epoch, subproc_env,
-                 heatmaps=False, validation_data_dir=None, return_generated_frames_in_info=False, do_train=True, summary_writer=None):
+class CuriosityWrapper:
+    def __init__(self,
+                 working_dir,
+                 sim,
+                 train_seq_length,
+                 subproc_env,
+                 extrinsic_reward_coefficient,
+                 intrinsic_reward_coefficient,
+                 heatmaps=False,
+                 validation_data_dir=None,
+                 return_generated_frames_in_info=False,
+                 do_train=True,
+                 summary_writer=None):
 
         self.sim = sim
 
@@ -41,10 +42,12 @@ class SubprocEnvSimWrapper:
         self.return_generated_frames_in_info = return_generated_frames_in_info
         self.do_train = do_train
         self.train_seq_length = train_seq_length
-        self.sequences_per_epoch = sequences_per_epoch
         self.heatmaps = heatmaps
         self.subproc_env = subproc_env
         self.num_envs = self.subproc_env.num_envs
+
+        self.extrinsic_reward_coefficient = extrinsic_reward_coefficient
+        self.intrinsic_reward_coefficient = intrinsic_reward_coefficient
 
         self.action_space = self.subproc_env.action_space
         self.observation_space = self.subproc_env.observation_space
@@ -70,7 +73,7 @@ class SubprocEnvSimWrapper:
         self.minibatch_dones = []
 
     def step(self, actions):
-        t_plus_1_obs, _, t_plus_1_dones, _ = self.subproc_env.step(actions)
+        t_plus_1_obs, extrinsic_rewards, t_plus_1_dones, _ = self.subproc_env.step(actions)
         # self.subproc_env.render()
         # print(t_plus_1_obs)
         t_plus_1_obs = t_plus_1_obs / 255.0
@@ -80,6 +83,7 @@ class SubprocEnvSimWrapper:
             t_actions=actions,
             t_states=self.t_states,
             t_dones=self.t_dones,
+            t_plus_1_dones=t_plus_1_dones,
             actual_t_plus_one_obs=t_plus_1_obs,
             return_t_plus_one_predictions=self.return_generated_frames_in_info
         )
@@ -120,7 +124,9 @@ class SubprocEnvSimWrapper:
 
         self.current_step += 1
 
-        return np.copy(t_plus_1_obs), losses, t_plus_1_dones, {'generated_frames': t_plus_1_predictions}
+        out_rewards = self.extrinsic_reward_coefficient * extrinsic_rewards + self.intrinsic_reward_coefficient * losses
+
+        return np.copy(t_plus_1_obs), out_rewards, t_plus_1_dones, {'generated_frames': t_plus_1_predictions}
 
     def reset(self):
         logger.info("RESET WAS CALLED")

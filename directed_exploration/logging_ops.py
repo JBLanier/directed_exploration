@@ -28,6 +28,7 @@ class LogWriter(object):
 
 
 def get_logger():
+    # Make sure this is at the root package of the project
     return _logging.getLogger(__package__)
 
 
@@ -40,7 +41,7 @@ def handle_exception(exc_type, exc_value, exc_traceback):
     get_logger().error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
 
 
-def init_logging(logfile=None, redirect_stdout=True, redirect_stderr=True, handle_tensorflow=True):
+def init_logging(logfile=None, redirect_stdout=True, redirect_stderr=True, external_packages_to_capture=None):
     logger = get_logger()
     logger.setLevel(_logging.DEBUG)
 
@@ -52,8 +53,8 @@ def init_logging(logfile=None, redirect_stdout=True, redirect_stderr=True, handl
         sys.stdout = LogWriter(logger, log_level=_logging.DEBUG)
     if redirect_stderr:
         sys.stderr = LogWriter(logger, log_level=_logging.ERROR)
-    if handle_tensorflow:
-        add_handlers_to_logger(_logging.getLogger('tensorflow'), logfile)
+    for package in external_packages_to_capture:
+        add_handlers_to_logger(_logging.getLogger(package), logfile)
 
 
 def add_handlers_to_logger(logger, logfile=None):
@@ -64,7 +65,6 @@ def add_handlers_to_logger(logger, logfile=None):
 
     if logfile:
         log_to_file(logger, logfile)
-
 
 def log_to_file(logger, filename):
     dirname = os.path.dirname(filename)

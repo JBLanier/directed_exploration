@@ -1,5 +1,6 @@
 .idea/
 weights/
+runs/
 __pycache__
 graph/
 *.egg-info

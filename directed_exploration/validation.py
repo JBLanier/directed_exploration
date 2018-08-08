@@ -1,12 +1,10 @@
-from directed_exploration.vae import VAE
-from directed_exploration.state_rnn import StateRNN
-from directed_exploration.utils.data_util import convertToOneHot
+from directed_exploration.sep_vae_rnn.vae import VAE
+from directed_exploration.sep_vae_rnn.state_rnn import StateRNN
 import os
 import re
 import tensorflow as tf
 import pickle
 import numpy as np
-import math
 import multiprocessing
 import logging
 
@@ -79,7 +77,7 @@ def validate_vae_state_rnn_pair_on_tf_records(data_dir, vae, state_rnn, sess, al
         with tf.name_scope('input_functions'):
             val_input_fn_iter, val_input_fn_init_op, file_name_placeholder = get_validation_tfrecord_input_fn(allowed_action_space)()
 
-        tfrecord_prefix = 'vae'
+        tfrecord_prefix = ''
         tfrecord_files = get_numbered_tfrecord_file_names_from_directory(data_dir, tfrecord_prefix)
 
         if len(tfrecord_files) <= 0:
@@ -125,7 +123,7 @@ def validate_vae_state_rnn_pair_on_tf_records(data_dir, vae, state_rnn, sess, al
                 frame_predictions_encoded = np.empty_like(input_frames_encoded)
                 state = None
                 for i, (input_code, action) in enumerate(zip(input_frames_encoded, input_actions)):
-                    predicted_code, state = state_rnn.predict_on_frames(
+                    predicted_code, state = state_rnn.predict_on_frame_batch(
                         z_codes=np.expand_dims(input_code, 0),
                         actions=np.expand_dims(action, 0),
                         states_mask=[[True]],
@@ -137,6 +135,73 @@ def validate_vae_state_rnn_pair_on_tf_records(data_dir, vae, state_rnn, sess, al
                 losses = vae.get_loss_for_decoded_frames(z_codes=np.reshape(frame_predictions_encoded,
                                                         newshape=[-1, vae.latent_dim]),
                                                          target_frames=batch_frames[1:])
+                sequence_mean_loss = np.mean(losses)
+
+                logger.debug('loss of {} on sequence of length {}'.format(sequence_mean_loss, len(losses)))
+
+                new_total_frames = frames_tested_on + len(losses)
+                avg_loss = (avg_loss*frames_tested_on + sequence_mean_loss * len(losses)) / new_total_frames
+                frames_tested_on = new_total_frames
+
+        return avg_loss
+
+def validate_full_rnn_on_tf_records(data_dir, rnn, sess, allowed_action_space):
+    with sess.as_default():
+        with tf.name_scope('input_functions'):
+            val_input_fn_iter, val_input_fn_init_op, file_name_placeholder = get_validation_tfrecord_input_fn(allowed_action_space)()
+
+        tfrecord_prefix = ''
+        tfrecord_files = get_numbered_tfrecord_file_names_from_directory(data_dir, tfrecord_prefix)
+
+        if len(tfrecord_files) <= 0:
+            raise FileNotFoundError("No usable tfrecords with prefix \'{}\' were found at {}".format(
+                tfrecord_prefix, data_dir)
+            )
+
+        avg_loss = 0
+        frames_tested_on = 0
+
+        for file_name in tfrecord_files:
+            sess.run(val_input_fn_init_op, feed_dict={file_name_placeholder: file_name})
+
+            while True:
+                try:
+                    batch_frames, batch_actions = sess.run(val_input_fn_iter)
+                except tf.errors.OutOfRangeError:
+                    break
+
+                if batch_actions.shape[1] == allowed_action_space.n:
+                    # convert from one hot
+                    batch_actions = np.argmax(batch_actions, axis=1)
+
+                batch_actions = np.squeeze(batch_actions)
+
+                assert len(batch_actions.shape) == 1
+
+                for action in batch_actions:
+                    assert allowed_action_space.contains(action)
+
+                input_frames = batch_frames[:-1]
+                target_frames = batch_frames[1:]
+                input_actions = batch_actions[:-1]
+
+                losses = np.empty(shape=(len(input_frames)))
+
+                state = None
+                for i, (input_frame, action, target_frame) in enumerate(zip(input_frames, input_actions, target_frames)):
+                    predicted_frame, state, loss = rnn.predict_on_frame_batch_with_loss(
+                        frames=np.reshape(input_frame, newshape=(1, *input_frame.shape)),
+                        actions=np.reshape(action, newshape=(1, *action.shape)),
+                        states_mask=[[True]],
+                        valid_prediction_mask=[True],
+                        states_in=state,
+                        target_predictions=np.reshape(target_frame, newshape=(1, *target_frame.shape)),
+                    )
+
+                    losses[i] = loss
+
+                if len(losses) == 0:
+                    logger.warning("zero length sequence")
                 sequence_mean_loss = np.mean(losses)
 
                 logger.debug('loss of {} on sequence of length {}'.format(sequence_mean_loss, len(losses)))

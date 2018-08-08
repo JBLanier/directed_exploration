@@ -53,7 +53,7 @@ def write_user_controller_atari_episode_to_tf_record(episode_index, write_dir):
         if frame[0] is None:
             frame[0] = env.reset()
 
-        frame[0] = cv2.resize(src=frame[0], dsize=(64, 64), interpolation=cv2.INTER_AREA)
+        frame[0] = cv2.resize(src=frame[0], dsize=(84, 84), interpolation=cv2.INTER_AREA)
         frame[0] = frame[0] / 255.0
 
         env.render()
@@ -277,7 +277,7 @@ if __name__ == '__main__':
     if not args.user_controlled:
         generate_random_vae_data(args)
     else:
-        # generate_user_controlled_atari_data(args)
-        generate_user_controlled_boxpush_data(args)
+        generate_user_controlled_atari_data(args)
+        # generate_user_controlled_boxpush_data(args)
 
 

@@ -1,5 +1,37 @@
 import numpy as np
 import cv2
+from functools import reduce
+import os
+
+class DotDict(dict):
+    def __getattr__(self, name):
+        return self[name]
+
+
+def none_or_str(value):
+    if value == 'None':
+        return None
+    return value
+
+
+def ensure_dir(directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
+
+
+def str_as_bool(value):
+    if value in ['True', 'true', 't', '1']:
+        return True
+    elif value in ['False', 'false', 'f', '0']:
+        return False
+    else:
+        raise ValueError("Argument must either be the string, \'True\' or \'False\'")
+
+def convert_scientific_str_to_int(value):
+    return int(float(value))
+
+def pretty_print_dict(dict, prefix):
+    return reduce(lambda acc, key: '{}\n{}: {}'.format(acc, key, dict[key]), dict.keys(), prefix)
 
 
 def debug_imshow_image_with_caption(window_label, frame, caption):

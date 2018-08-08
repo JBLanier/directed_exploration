@@ -64,16 +64,6 @@ def dynamic_lstm(input_sequence_batch, retain_state_mask_sequence_batch, initial
     return sequence_batches_out, state_batch_out
 
 
-def seq_to_batch(h, flat = False):
-    shape = h[0].get_shape().as_list()
-    if not flat:
-        assert(len(shape) > 1)
-        nh = h[0].get_shape()[-1].value
-        return tf.reshape(tf.concat(axis=1, values=h), [-1, nh])
-    else:
-        return tf.reshape(tf.stack(values=h, axis=1), [-1])
-
-
 def mask_non_zero_counts(mask):
     with tf.name_scope('mask_non_zero_count'):
         used = tf.sign(tf.abs(mask))
@@ -81,67 +71,143 @@ def mask_non_zero_counts(mask):
         return length
 
 
-def RNN_forward(sequence_inputs, batch_size, state_reset_before_prediction_mask, lstm_size, states_in, latent_dim, variable_scope, reuse=False):
+def RNN_forward(frame_inputs, action_inputs, batch_size, state_reset_before_prediction_mask, lstm_size, states_in, variable_scope, reuse=False):
     with tf.variable_scope(variable_scope, reuse=reuse):
         variance_scaling = tf.contrib.layers.variance_scaling_initializer()
         xavier = tf.contrib.layers.xavier_initializer()
 
-        runtime_sequence_length = tf.shape(sequence_inputs)[1]
+        runtime_sequence_length = tf.shape(frame_inputs)[1]
 
-        lstm_output, states_out = dynamic_lstm(input_sequence_batch=sequence_inputs,
+        frame_inputs_as_batch = tf.reshape(frame_inputs, shape=[batch_size * runtime_sequence_length, *frame_inputs.shape[2:]])
+
+        print("inputs shape {}".format(frame_inputs_as_batch.shape))
+
+        compress = tf.layers.Conv2D(filters=32, kernel_size=4, strides=2,
+                                    padding='valid', activation=tf.nn.relu,
+                                    kernel_initializer=variance_scaling,
+                                    name='encode_1')(frame_inputs_as_batch)
+
+        print("compress 1 shape {}".format(compress.shape))
+
+        compress = tf.layers.Conv2D(filters=64, kernel_size=4, strides=2,
+                                    padding='valid', activation=tf.nn.relu,
+                                    kernel_initializer=variance_scaling,
+                                    name='encode_2')(compress)
+
+        print("compress 2 shape {}".format(compress.shape))
+
+        compress = tf.layers.Conv2D(filters=128, kernel_size=4, strides=2,
+                                    padding='valid', activation=tf.nn.relu,
+                                    kernel_initializer=variance_scaling,
+                                    name='encode_3')(compress)
+
+        print("compress 3 shape {}".format(compress.shape))
+
+        compress = tf.layers.Conv2D(filters=256, kernel_size=4, strides=2,
+                                    padding='valid', activation=tf.nn.relu,
+                                    kernel_initializer=variance_scaling,
+                                    name='encode_4')(compress)
+        print("compress 4 shape {}".format(compress.shape))
+        compress_before_dense_shape = compress.shape
+
+        compress = tf.layers.flatten(compress)
+
+        print("compress flatten shape {}".format(compress.shape))
+
+
+        compress = tf.layers.Dense(units=512, activation=tf.nn.relu, kernel_initializer=variance_scaling)(compress)
+
+
+        print("compress dense 1 shape {}".format(compress.shape))
+
+
+        compress_as_seq = tf.reshape(compress, shape=[batch_size, runtime_sequence_length, compress.shape[1]])
+
+        lstm_inputs = tf.concat(values=(compress_as_seq, action_inputs), axis=2)
+
+        lstm_output, states_out = dynamic_lstm(input_sequence_batch=lstm_inputs,
                                                retain_state_mask_sequence_batch=state_reset_before_prediction_mask,
                                                initial_states_batch=states_in,
                                                num_hidden=lstm_size,
                                                scope='lstm1')
 
-        lstm_output_for_dense = tf.reshape(lstm_output, shape=[batch_size*runtime_sequence_length, lstm_size])
+        lstm_output_as_batch = tf.reshape(lstm_output, shape=[batch_size*runtime_sequence_length, lstm_size])
 
-        dense1 = tf.layers.dense(inputs=lstm_output_for_dense,
-                                 units=256,
-                                 activation=tf.nn.relu,
-                                 kernel_initializer=variance_scaling)
+        decompress = tf.layers.Dense(units=2304, activation=tf.nn.relu, kernel_initializer=variance_scaling)(lstm_output_as_batch)
 
-        dense2 = tf.layers.dense(inputs=dense1,
-                                 units=128,
-                                 activation=tf.nn.relu,
-                                 kernel_initializer=variance_scaling)
+        # decompress = tf.reshape(tensor=decompress, shape=[-1, 1, 1, decompress.shape[1]])
+        decompress = tf.reshape(tensor=decompress, shape=[-1, *compress_before_dense_shape[1:]])
 
-        dense3 = tf.layers.dense(inputs=dense2,
-                                 units=latent_dim,
-                                 activation=None,
-                                 kernel_initializer=xavier)
+        print("decompress dense 1 shape {}".format(decompress.shape))
 
-        out = tf.reshape(dense3, shape=[batch_size, runtime_sequence_length, latent_dim])
+
+        decompress = tf.layers.Conv2DTranspose(filters=128, kernel_size=5, strides=2,
+                                             padding='valid', activation=tf.nn.relu,
+                                             kernel_initializer=variance_scaling,
+                                             name='decode_1')(decompress)
+
+        print("decompress 1 shape {}".format(decompress.shape))
+
+
+        decompress = tf.layers.Conv2DTranspose(filters=64, kernel_size=4, strides=2,
+                                             padding='valid', activation=tf.nn.relu,
+                                             kernel_initializer=variance_scaling,
+                                             name='decode_2')(decompress)
+
+        print("decompress 2 shape {}".format(decompress.shape))
+
+
+        decompress = tf.layers.Conv2DTranspose(filters=32, kernel_size=4, strides=2,
+                                             padding='valid', activation=tf.nn.relu,
+                                             kernel_initializer=variance_scaling,
+                                             name='decode_3')(decompress)
+
+        print("decompress 3 shape {}".format(decompress.shape))
+
+
+        decompress = tf.layers.Conv2DTranspose(filters=3, kernel_size=2, strides=2,
+                                             padding='valid', activation=tf.nn.sigmoid,
+                                             kernel_initializer=xavier, bias_initializer=xavier,
+                                             name='decode_4')(decompress)
+
+        print("decompress 4 shape {}".format(decompress.shape))
+
+
+        out = tf.reshape(decompress, shape=tf.shape(frame_inputs), name='out_reshape')
 
         return out, states_out
 
 
-class StateRNN(Model):
-    def __init__(self, latent_dim=4, action_dim=5, working_dir=None, sess=None, graph=None, summary_writer=None):
-        logger.info("RNN latent dim {} action dim {}".format(latent_dim, action_dim))
+class FramePredictRNN(Model):
+    def __init__(self, observation_space, action_dim, working_dir=None, sess=None, graph=None, summary_writer=None):
+        logger.info("Frame_Predict_RNN obs space {} action dim {}".format(observation_space, action_dim))
 
-        self.latent_dim = latent_dim
+        self.observation_space = observation_space
         self.action_dim = action_dim
         self.saved_state = None
 
-        save_prefix = 'state_rnn_{}dim'.format(self.latent_dim)
+        save_prefix = 'frame_predict_rnn_obs_{}_act_{}'.format(self.observation_space, self.action_dim)
 
         super().__init__(save_prefix, working_dir, sess, graph, summary_writer=summary_writer)
 
     def _build_model(self, restore_from_dir=None):
 
         with self.graph.as_default():
-            rnn_scope = 'STATE_RNN_MODEL'
+            rnn_scope = 'FRAME_PREDICT_RNN_MODEL'
             with tf.variable_scope(rnn_scope):
 
-                self.sequence_inputs = tf.placeholder(tf.float32, shape=[None, None, self.latent_dim + self.action_dim],
-                                                      name='z_and_action_inputs')
-                self.sequence_targets = tf.placeholder(tf.float32, shape=[None, None, self.latent_dim],
-                                                       name='z_targets')
+                self.sequence_frame_inputs = tf.placeholder(tf.float32, shape=[None, None, *self.observation_space.shape],
+                                                      name='frame_inputs')
 
-                input_shape = tf.shape(self.sequence_inputs)
-                runtime_batch_size = input_shape[0]
-                runtime_sequence_length = input_shape[1]
+                self.sequence_action_inputs = tf.placeholder(tf.float32, shape=[None, None, self.action_dim],
+                                                    name='action_inputs')
+
+                self.sequence_frame_targets = tf.placeholder(tf.float32, shape=[None, None, *self.observation_space.shape],
+                                                       name='frame_targets')
+
+                frame_input_shape = tf.shape(self.sequence_frame_inputs)
+                runtime_batch_size = frame_input_shape[0]
+                runtime_sequence_length = frame_input_shape[1]
 
                 # mask (done at time t-1)
                 self.state_reset_before_prediction_mask = tf.placeholder(tf.float32, [None, None])
@@ -155,12 +221,12 @@ class StateRNN(Model):
                 rnn_forward_scope = 'rnn_forward'
 
                 self.output, self.states_out = RNN_forward(
-                        sequence_inputs=self.sequence_inputs,
+                        frame_inputs=self.sequence_frame_inputs,
+                        action_inputs=self.sequence_action_inputs,
                         batch_size=runtime_batch_size,
                         state_reset_before_prediction_mask=self.state_reset_before_prediction_mask,
                         lstm_size=lstm_size,
                         states_in=self.states_in,
-                        latent_dim=self.latent_dim,
                         variable_scope=rnn_forward_scope,
                         reuse=False)
 
@@ -178,15 +244,15 @@ class StateRNN(Model):
                     valid_example_mask = self.state_reset_between_input_and_target_mask
                     valid_example_counts = mask_non_zero_counts(valid_example_mask)
 
-                    frame_squared_errors = tf.square(self.output - self.sequence_targets)
-                    frame_mean_squared_errors = tf.reduce_mean(frame_squared_errors, axis=2)
-                    masked_frame_mean_squared_erros = frame_mean_squared_errors * valid_example_mask
-                    mse_over_sequences = tf.reduce_sum(masked_frame_mean_squared_erros, 1) / valid_example_counts
+                    frame_squared_errors = tf.square(self.output - self.sequence_frame_targets)
+                    frame_squared_error = tf.reduce_sum(frame_squared_errors, axis=(2, 3, 4))
+                    self.masked_frame_mean_squared_errors = frame_squared_error * valid_example_mask
+                    mse_over_sequences = tf.reduce_sum(self.masked_frame_mean_squared_errors, 1) / valid_example_counts
                     mse_over_batch = tf.reduce_mean(mse_over_sequences)
                     self.mse_loss = mse_over_batch
                     tf.summary.scalar('mse_loss', self.mse_loss)
 
-            rnn_ops_scope = 'STATE_RNN_OPS'
+            rnn_ops_scope = 'FRAME_PREDICT_RNN_OPS'
             with tf.variable_scope(rnn_ops_scope):
                 self.optimizer = tf.train.RMSPropOptimizer(learning_rate=0.0001)
                 self.local_step = tf.Variable(0, name='local_step', trainable=False)
@@ -202,14 +268,14 @@ class StateRNN(Model):
                                             max_to_keep=5,
                                             keep_checkpoint_every_n_hours=1)
 
-            self.init = tf.variables_initializer(var_list=var_list, name='state_rnn_initializer')
+            self.init = tf.variables_initializer(var_list=var_list, name='frame_predict_rnn_initializer')
 
             self.tvars = tf.trainable_variables()
 
         if restore_from_dir:
             self._restore_model(restore_from_dir)
         else:
-            logger.debug("Running State RNN local init\n")
+            logger.debug("Running Frame Predict RNN local init\n")
             self.sess.run(self.init)
 
         self.writer.add_graph(self.graph)
@@ -224,24 +290,23 @@ class StateRNN(Model):
 
         return dict
 
-    def train_on_batch(self, input_code_sequence_batch, target_code_sequence_batch, states_mask_sequence_batch,
+    def train_on_batch(self, input_frame_sequence_batch, target_frame_sequence_batch, states_mask_sequence_batch,
                        input_action_sequence_batch, states_batch=None):
 
-        assert np.array_equal(input_code_sequence_batch.shape[:-1], target_code_sequence_batch.shape[:-1])
-        assert np.array_equal(input_code_sequence_batch.shape[:-1], states_mask_sequence_batch[:, :-1].shape)
-        assert np.array_equal(input_code_sequence_batch.shape[:-1], input_action_sequence_batch.shape[:-1])
-
-        input_sequence_batch = np.concatenate((input_code_sequence_batch, input_action_sequence_batch), axis=2)
+        assert np.array_equal(input_frame_sequence_batch.shape[:-3], target_frame_sequence_batch.shape[:-3])
+        assert np.array_equal(input_frame_sequence_batch.shape[:-3], states_mask_sequence_batch[:, :-1].shape)
+        assert np.array_equal(input_frame_sequence_batch.shape[:-3], input_action_sequence_batch.shape[:-1])
 
         feed_dict = {
-            self.sequence_inputs: input_sequence_batch,
-            self.sequence_targets: target_code_sequence_batch,
+            self.sequence_frame_inputs: input_frame_sequence_batch,
+            self.sequence_action_inputs: input_action_sequence_batch,
+            self.sequence_frame_targets: target_frame_sequence_batch,
             self.state_reset_before_prediction_mask: states_mask_sequence_batch[:, :-1],
             self.state_reset_between_input_and_target_mask:  states_mask_sequence_batch[:, 1:]
         }
 
         if states_batch is not None:
-            assert np.array_equal(input_code_sequence_batch.shape[0], states_batch.shape[0])
+            assert np.array_equal(input_frame_sequence_batch.shape[0], states_batch.shape[0])
             feed_dict[self.states_in] = states_batch
 
         _, loss, states_out, step, summaries = self.sess.run([self.train_op,
@@ -365,38 +430,47 @@ class StateRNN(Model):
     #         np.multiply(cell.c, mask, out=cell.c)
     #         np.multiply(cell.h, mask, out=cell.h)
 
-    def predict_on_frames(self, z_codes, actions, states_mask, states_in=None):
+    def predict_on_frame_batch_with_loss(self, frames, actions, states_mask, states_in=None, target_predictions=None, valid_prediction_mask=None):
 
         actions = np.asarray(actions)
         states_mask = np.asarray(states_mask)
 
-        assert z_codes.shape[0] == actions.shape[0]
-        assert z_codes.shape[0] == states_mask.shape[0]
-        assert z_codes.shape[1] == self.latent_dim
+        assert frames.shape[0] == actions.shape[0]
+        assert frames.shape[0] == states_mask.shape[0]
+        assert frames.shape[1:] == self.observation_space.shape
 
-        batch_size = z_codes.shape[0]
+        batch_size = frames.shape[0]
 
         actions = convertToOneHot(actions, num_classes=self.action_dim)
         actions = np.reshape(actions, newshape=(batch_size, self.action_dim))
 
         states_mask = np.reshape(states_mask, newshape=(batch_size, 1))
 
-        sequence_inputs = np.expand_dims(np.concatenate((z_codes, actions), axis=1), 1)
-
-        feed_dict = {self.sequence_inputs: sequence_inputs,
+        feed_dict = {self.sequence_frame_inputs: np.expand_dims(frames, axis=1),
+                     self.sequence_action_inputs: np.expand_dims(actions, axis=1),
                      self.state_reset_before_prediction_mask: states_mask
                      }
 
         if states_in is not None:
             feed_dict[self.states_in] = states_in
 
-        predictions, states_out = self.sess.run([self.output, self.states_out], feed_dict=feed_dict)
+        if target_predictions is not None and valid_prediction_mask is not None:
+            feed_dict[self.sequence_frame_targets] = np.expand_dims(target_predictions, axis=1)
+            feed_dict[self.state_reset_between_input_and_target_mask] = np.expand_dims(valid_prediction_mask, axis=1)
 
-        return predictions[:, 0, :], states_out
+            predictions, states_out, losses = self.sess.run([self.output, self.states_out, self.masked_frame_mean_squared_errors], feed_dict=feed_dict)
+            return predictions[:, 0, ...], states_out, losses[:, 0]
 
-    def predict_on_frames_retain_state(self, z_codes, actions, states_mask):
+        else:
+            predictions, states_out = self.sess.run([self.output, self.states_out], feed_dict=feed_dict)
+            return predictions[:, 0, ...], states_out, None
 
-        predictions, states_out = self.predict_on_frames(z_codes, actions, states_mask, self.saved_state)
+    def predict_on_frame_batch(self, frames, actions, states_mask, states_in=None):
+        return self.predict_on_frame_batch_with_loss( frames, actions, states_mask, states_in)[:2]
+
+    def predict_on_frames_retain_state(self, frames, actions, states_mask):
+
+        predictions, states_out = self.predict_on_frame_batch(frames, actions, states_mask, self.saved_state)
         self.saved_state = states_out
         return predictions
 

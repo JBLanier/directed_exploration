@@ -2,6 +2,9 @@ import numpy as np
 from multiprocessing import Process, Pipe
 from baselines.common.vec_env import VecEnv, CloudpickleWrapper
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
+from baselines.bench import Monitor
+
+import os
 import gym
 import gym_boxpush
 import cv2
@@ -117,7 +120,7 @@ class RescaleFrameWrapper(gym.ObservationWrapper):
         return frame / 255.0
 
 
-def make_subproc_env(env_id, num_env, width, height, start_index=0):
+def make_subproc_env(env_id, num_env, width, height, seed, start_index=0, monitor_to_dir=None):
     """
     Create a SubprocVecEnv.
     """
@@ -125,7 +128,9 @@ def make_subproc_env(env_id, num_env, width, height, start_index=0):
         def _thunk():
             env = gym.make(env_id)
             env = ResizeFrameWrapper(env, width, height)
-            # env.seed(seed + rank)
+            env.seed(seed + rank)
+            if monitor_to_dir is not None:
+                env = Monitor(env, monitor_to_dir and os.path.join(monitor_to_dir, str(rank)), allow_early_resets=True)
             return env
 
         return _thunk

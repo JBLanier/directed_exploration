@@ -1,8 +1,4 @@
-from directed_exploration.vae import VAE
-from directed_exploration.state_rnn import StateRNN
-from directed_exploration.old_state_rnn import StateRNNOld
-from directed_exploration.validation import validate_vae_state_rnn_pair_on_tf_records
-import tensorflow as tf
+from directed_exploration.sep_vae_rnn.state_rnn import StateRNN
 import numpy as np
 import logging
 
@@ -56,10 +52,10 @@ class TestRNNSim:
     def predict_on_batch(self, t_obs, t_actions, t_dones, t_states=None, actual_t_plus_one_obs=None, return_t_plus_one_predictions=True):
 
         encoded_current_obs = t_obs[:, 0, 0, :1]
-        t_plus_1_code_predictions, t_plus_1_states = self.state_rnn.predict_on_frames(z_codes=encoded_current_obs,
-                                                                                      actions=t_actions,
-                                                                                      states_mask=1 - np.asarray(t_dones),
-                                                                                      states_in=t_states)
+        t_plus_1_code_predictions, t_plus_1_states = self.state_rnn.predict_on_frame_batch(z_codes=encoded_current_obs,
+                                                                                           actions=t_actions,
+                                                                                           states_mask=1 - np.asarray(t_dones),
+                                                                                           states_in=t_states)
         # other_predictions, other_states = self.state_rnn2.predict_on_frames(z_codes=encoded_current_obs,
         #                                                                               actions=t_actions,
         #                                                                               states_mask=1 - np.asarray(t_dones),

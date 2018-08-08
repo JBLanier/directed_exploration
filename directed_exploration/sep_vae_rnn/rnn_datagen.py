@@ -8,7 +8,7 @@ import argparse
 import re
 import itertools
 from functools import reduce
-from directed_exploration.vae import VAE
+from directed_exploration.sep_vae_rnn.vae import VAE
 import gym
 import random
 

@@ -110,7 +110,8 @@ class VAE(Model):
 
                         tf.summary.scalar('reconstruction_loss', self.reconstruction_loss)
 
-                    self.loss = self.kl_div_loss + (self.reconstruction_loss / 100)
+                    self.loss = self.kl_div_loss + self.reconstruction_loss
+                    # self.loss = self.kl_div_loss + (self.reconstruction_loss / 100)
                     tf.summary.scalar('total_loss', self.loss)
 
             vae_ops_scope = 'VAE_OPS'

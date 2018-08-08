@@ -1,5 +1,5 @@
-from directed_exploration.vae import VAE
-from directed_exploration.state_rnn import StateRNN
+from directed_exploration.sep_vae_rnn.vae import VAE
+from directed_exploration.sep_vae_rnn.state_rnn import StateRNN
 from directed_exploration.validation import validate_vae_state_rnn_pair_on_tf_records
 
 import numpy as np
@@ -32,10 +32,10 @@ class SeparateVaeRnnSim:
     def predict_on_batch(self, t_obs, t_actions, t_dones, t_states=None, actual_t_plus_one_obs=None, return_t_plus_one_predictions=True):
 
         encoded_current_obs = self.vae.encode_frames(t_obs)
-        t_plus_1_code_predictions, t_plus_1_states = self.state_rnn.predict_on_frames(z_codes=encoded_current_obs,
-                                                                                      actions=t_actions,
-                                                                                      states_mask=1 - np.asarray(t_dones),
-                                                                                      states_in=t_states)
+        t_plus_1_code_predictions, t_plus_1_states = self.state_rnn.predict_on_frame_batch(z_codes=encoded_current_obs,
+                                                                                           actions=t_actions,
+                                                                                           states_mask=1 - np.asarray(t_dones),
+                                                                                           states_in=t_states)
 
         tensors_to_evaluate = []
         feed_dict = {self.vae.z_encoded: t_plus_1_code_predictions, self.vae.x: actual_t_plus_one_obs}
