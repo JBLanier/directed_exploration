@@ -54,7 +54,7 @@ class CuriosityWrapper:
 
         self.loss_accumulators = None
 
-        self.t_obs = self.subproc_env.reset() / 255.0
+        self.t_obs = self.subproc_env.reset()
         self.t_dones = [True for _ in range(self.num_envs)]
 
         self.train_states = None
@@ -74,9 +74,6 @@ class CuriosityWrapper:
 
     def step(self, actions):
         t_plus_1_obs, extrinsic_rewards, t_plus_1_dones, _ = self.subproc_env.step(actions)
-        # self.subproc_env.render()
-        # print(t_plus_1_obs)
-        t_plus_1_obs = t_plus_1_obs / 255.0
 
         predict_vals = self.sim.predict_on_batch(
             t_obs=self.t_obs,
@@ -126,12 +123,14 @@ class CuriosityWrapper:
 
         out_rewards = self.extrinsic_reward_coefficient * extrinsic_rewards + self.intrinsic_reward_coefficient * losses
 
-        return np.copy(t_plus_1_obs), out_rewards, t_plus_1_dones, {'generated_frames': t_plus_1_predictions}
+        # logger.info("Extrinsic rewards: {} intrinsic rewards: {} out_rewards: {}".format(extrinsic_rewards, losses, out_rewards))
+
+        return np.copy(t_plus_1_obs), out_rewards, np.copy(t_plus_1_dones), {'generated_frames': t_plus_1_predictions}
 
     def reset(self):
         logger.info("RESET WAS CALLED")
 
-        self.t_obs = self.subproc_env.reset() / 255.0
+        self.t_obs = self.subproc_env.reset()
         self.t_dones = [True for _ in range(self.num_envs)]
 
         self.t_states = None

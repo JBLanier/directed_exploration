@@ -26,6 +26,9 @@ class FramePredictRNNSim:
 
     def predict_on_batch(self, t_obs, t_actions, t_dones, t_states=None, actual_t_plus_one_obs=None, t_plus_1_dones=None, return_t_plus_one_predictions=True):
 
+        t_obs = t_obs / 255.0
+        actual_t_plus_one_obs = actual_t_plus_one_obs / 255.0
+
         valid_prediction_mask = None
         if t_plus_1_dones is not None:
             valid_prediction_mask = 1 - np.asarray(t_plus_1_dones)
@@ -60,6 +63,8 @@ class FramePredictRNNSim:
 
         assert obs_sequence_batch.shape[0] == action_sequence_batch.shape[0]
         assert obs_sequence_batch.shape[0] == dones_sequence_batch.shape[0]
+
+        obs_sequence_batch = obs_sequence_batch / 255.0
 
         mask = 1 - dones_sequence_batch
 
