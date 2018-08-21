@@ -7,7 +7,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 
 install_requires = [
     "numpy",
-    "gym_boxpush",
+    "colorlog",
 ]
 
 setup(
@@ -17,7 +17,7 @@ setup(
     classifiers=[
         "Intended Audience :: Science/Research"
     ],
-    url='https://github.com/JBLanier/exploration_seach',
+    url='https://github.com/JBLanier/directed_exploration',
     author='J.B. Lanier',
     author_email='jblanier@uci.edu',
     keywords='',

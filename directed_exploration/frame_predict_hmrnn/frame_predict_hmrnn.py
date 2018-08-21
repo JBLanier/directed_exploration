@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from directed_exploration.model import Model
 from directed_exploration.utils.data_util import convertToOneHot
+from directed_exploration.frame_predict_hmrnn.dynamic_hmlstm import dynamic_hmlstm
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,45 +25,6 @@ def ortho_init(scale=1.0):
         return (scale * q[:shape[0], :shape[1]]).astype(np.float32)
 
     return _ortho_init
-
-
-def dynamic_lstm(input_sequence_batch, retain_state_mask_sequence_batch, initial_states_batch,
-                 scope, num_hidden, init_scale=1.0):
-
-    input_sequence_batch = tf.transpose(input_sequence_batch, [1, 0, 2], name='transpose_xs')
-    retain_state_mask_sequence_batch = tf.expand_dims(
-        tf.transpose(retain_state_mask_sequence_batch, [1, 0], name='transpose_ms'),
-        axis=2
-    )
-
-    nbatch, nin = [v.value for v in input_sequence_batch[0].get_shape()]
-    with tf.variable_scope(scope):
-        wx = tf.get_variable("wx", [nin, num_hidden * 4], initializer=ortho_init(init_scale))
-        wh = tf.get_variable("wh", [num_hidden, num_hidden * 4], initializer=ortho_init(init_scale))
-        b = tf.get_variable("b", [num_hidden * 4], initializer=tf.constant_initializer(0.0))
-    c, h = tf.split(axis=1, num_or_size_splits=2, value=initial_states_batch)
-
-    def _dynamic_lstm_step(state_accumulator, inputs_elem):
-        c, h = state_accumulator
-        batch_inputs, batch_mask = inputs_elem
-        c = c * batch_mask
-        h = h * batch_mask
-        z = tf.matmul(batch_inputs, wx) + tf.matmul(h, wh) + b
-        i, f, o, u = tf.split(axis=1, num_or_size_splits=4, value=z)
-        i = tf.nn.sigmoid(i)
-        f = tf.nn.sigmoid(f)
-        o = tf.nn.sigmoid(o)
-        u = tf.tanh(u)
-        c = f * c + i * u
-        h = o * tf.tanh(c)
-        return c, h
-
-    states = tf.scan(fn=_dynamic_lstm_step, elems=(input_sequence_batch, retain_state_mask_sequence_batch), initializer=(c, h), back_prop=True)
-    sequence_batches_out = tf.transpose(states[1], [1, 0, 2])
-    state_batch_out = tf.concat(axis=1, values=(states[0][-1], states[1][-1]))
-
-    return sequence_batches_out, state_batch_out
-
 
 def mask_non_zero_counts(mask):
     with tf.name_scope('mask_non_zero_count'):
@@ -178,7 +140,7 @@ def RNN_forward(frame_inputs, action_inputs, batch_size, state_reset_before_pred
         return out, states_out
 
 
-class FramePredictRNN(Model):
+class FramePredictHMRNN(Model):
     def __init__(self, observation_space, action_dim, working_dir=None, sess=None, graph=None, summary_writer=None):
         logger.info("Frame_Predict_RNN obs space {} action dim {}".format(observation_space, action_dim))
 
